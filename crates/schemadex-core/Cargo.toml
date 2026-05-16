@@ -14,9 +14,11 @@ categories = ["database", "development-tools"]
 
 [features]
 default = []
-postgres = ["sqlx/postgres", "sqlx/runtime-tokio-native-tls"]
-sqlite = ["sqlx/sqlite", "sqlx/runtime-tokio-native-tls"]
-mysql = ["sqlx/mysql", "sqlx/runtime-tokio-native-tls"]
+# `dep:openssl-sys` pulls in a vendored OpenSSL build so the manylinux_2_28
+# wheel doesn't need a system OpenSSL installed in the build container.
+postgres = ["sqlx/postgres", "sqlx/runtime-tokio-native-tls", "dep:openssl-sys"]
+sqlite = ["sqlx/sqlite", "sqlx/runtime-tokio-native-tls", "dep:openssl-sys"]
+mysql = ["sqlx/mysql", "sqlx/runtime-tokio-native-tls", "dep:openssl-sys"]
 duckdb_backend = ["dep:duckdb"]
 bigquery = ["dep:gcp-bigquery-client"]
 snowflake = ["dep:reqwest", "dep:jsonwebtoken", "dep:base64", "dep:rsa"]
@@ -51,6 +53,7 @@ regex.workspace = true
 zstd.workspace = true
 tiberius = { version = "0.12", default-features = false, features = ["tds73", "rustls"], optional = true }
 tokio-util = { version = "0.7", features = ["compat"], optional = true }
+openssl-sys = { version = "0.9", features = ["vendored"], optional = true }
 gcp-bigquery-client = { version = "0.28", default-features = false, features = ["rust-tls", "ring"], optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
 jsonwebtoken = { version = "9", optional = true }
