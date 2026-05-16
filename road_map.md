@@ -217,6 +217,13 @@ The list below assumes 0.1.x ships and a few people try it. Items are ordered by
 - [x] **Synonym dictionary.** `SynonymMap` loadable from `.schemadex/synonyms.yaml`; `resolve_column_with_synonyms` short-circuits with confidence 1.0; Python `cache.resolve(... synonyms_path=)` (commit `be1caf9`).
 - [x] **JSON Schema tool definitions for MCP.** Annotated FastMCP tools with explicit descriptions + bounds; new `validate_sql` + `hint_for_error` tools; `schemadex-mcp --print-schemas` flag (commit `be1caf9`).
 
+### v0.8 — ecosystem adapters (~2 weekends)
+- [x] **LlamaIndex retriever.** `examples/llamaindex_retriever.py::SchemaIndexRetriever` wraps `describe_for_agent` as a `BaseRetriever` (commit `0f8e5aa`).
+- [x] **DSPy module.** `examples/dspy_module.py::SchemadexContext` emits `{schema, schema_tokens, question}` for downstream SQL-writing modules (commit `0f8e5aa`).
+- [x] **LiteLLM adapter.** `examples/litellm_adapter.py::schemadex_messages` + `schemadex_completion` lets users call any of LiteLLM's 100+ providers (commit `0f8e5aa`).
+- [x] **dbt manifest source.** `schemadex.dbt_source.from_manifest(path)` projects dbt models into a synthetic SQLite mirror; offline / CI friendly (commit `0f8e5aa`).
+- [x] **Jupyter magic.** `%load_ext schemadex` + `%schemadex {list-tables,describe,resolve}` + `%schemadex_url` for sticky defaults (commit `0f8e5aa`).
+
 ### Observability, safety, distribution (chip away in parallel)
 - [x] **`tracing` spans** on cache + every backend method; `RUST_LOG=schemadex=info,sqlx=warn` recipe documented (commit `a64633d`).
 - [x] **Sample-value redaction policy.** `RedactionPolicy::default_pii()` enabled by default on `SamplingPolicy::default_policy` (commit `a64633d`).
