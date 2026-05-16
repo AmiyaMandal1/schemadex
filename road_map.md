@@ -185,7 +185,7 @@ The list below assumes 0.1.x ships and a few people try it. Items are ordered by
 - [x] **DuckDB PK/FK introspection.** Wired `duckdb_constraints()` with `array_to_string` to flatten `VARCHAR[]` since the duckdb crate has no `Vec<String>: FromSql`. New `integration_duckdb.rs` test (commit `b31ec58`).
 - [x] **`sample_values=True` exposed at Python level.** Added `sample_values`, `sample_top_k`, `sample_sentinel_threshold`, `sample_rows` kwargs to `SchemaCache.from_url`. Routes through new `backends::connect_with_sampling` dispatcher (commit `a97e07e`).
 - [x] **Sentinel-flag plumbed into `describe_for_agent`.** Same commit — postgres now collects + renders sentinels when `sample_values=True`. sqlite/duckdb accept the flag but no-op until those backends learn to sample (TODOs in `backends/mod.rs`).
-- [ ] **Per-table `refresh(table=...)` on Python API.** Rust core supports incremental refresh; Python only exposes the full-cache build. Add `cache.refresh()` and `cache.refresh_table("orders")`.
+- [x] **Per-table `refresh(table=...)` on Python API.** Added `SchemaCache::refresh_table` in core + `PySchemaCache.refresh` / `.refresh_table` on the Python surface, both returning `(changed, unchanged)`. New smoke test exercises both call shapes (commit `5098fcd`).
 
 ### v0.3 — real-LLM bench teeth (~2 weekends)
 - [ ] **Three-axis ablation.** Instead of "baseline vs treatment", run 4 cells: {schema dump, schemadex describe} × {no resolve, resolve}. Today's bench bundles the contributions; the ablation isolates each.
