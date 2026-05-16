@@ -45,10 +45,59 @@ pub fn describe_for_agent(db: &Database, opts: &DescribeOptions) -> Result<(Stri
 
     if let Some(ref hint) = opts.hint {
         let h = hint.to_lowercase();
-        tables.sort_by_key(|t| {
-            let score = relevance(t, &h);
-            std::cmp::Reverse(score)
-        });
+
+        // First pass: score every table by hint overlap.
+        let mut scores: Vec<u32> = tables.iter().map(|t| relevance(t, &h)).collect();
+
+        // Second pass: identify top-scoring tables (positive scores only) and
+        // boost any other table that shares a foreign key with them. The
+        // boost rewards joined-along-FK companions even when their own
+        // name/columns don't overlap the hint.
+        let top_score = scores.iter().copied().max().unwrap_or(0);
+        if top_score > 0 {
+            let top_names: Vec<String> = tables
+                .iter()
+                .zip(scores.iter())
+                .filter(|(_, s)| **s == top_score)
+                .flat_map(|(t, _)| {
+                    // Match on both bare and qualified names so FK lookups
+                    // hit regardless of how `referenced_table` is spelled.
+                    vec![
+                        t.name.to_lowercase(),
+                        t.qualified_name().to_lowercase(),
+                    ]
+                })
+                .collect();
+
+            for (idx, t) in tables.iter().enumerate() {
+                if scores[idx] == top_score {
+                    continue;
+                }
+                // Outgoing FK: this table references a top-scoring table.
+                let outgoing = t
+                    .foreign_keys
+                    .iter()
+                    .any(|fk| top_names.contains(&fk.referenced_table.to_lowercase()));
+                // Incoming FK: some top-scoring table references this one.
+                let self_bare = t.name.to_lowercase();
+                let self_qual = t.qualified_name().to_lowercase();
+                let incoming = tables.iter().zip(scores.iter()).any(|(other, s)| {
+                    *s == top_score
+                        && other.foreign_keys.iter().any(|fk| {
+                            let rt = fk.referenced_table.to_lowercase();
+                            rt == self_bare || rt == self_qual
+                        })
+                });
+                if outgoing || incoming {
+                    scores[idx] = scores[idx].saturating_add(5);
+                }
+            }
+        }
+
+        // Sort tables by the (boosted) score, descending.
+        let mut indexed: Vec<(usize, &Table)> = tables.iter().copied().enumerate().collect();
+        indexed.sort_by_key(|(i, _)| std::cmp::Reverse(scores[*i]));
+        tables = indexed.into_iter().map(|(_, t)| t).collect();
     }
 
     let mut levels = [true, true, true, true, true];
@@ -172,7 +221,7 @@ fn render(tables: &[&Table], opts: &DescribeOptions, levels: &[bool; 5]) -> Stri
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Column, DataType, Table};
+    use crate::model::{Column, DataType, ForeignKey, Table};
 
     fn small_db() -> Database {
         Database {
@@ -214,5 +263,93 @@ mod tests {
         .unwrap();
         assert!(text.contains("users"));
         assert!(tokens < 1000);
+    }
+
+    #[test]
+    fn fk_boost_lifts_related_table() {
+        // `customers` has no hint-overlap with "orders", but `orders` has
+        // an FK pointing at it. The boost should lift `customers` above
+        // other unrelated tables while keeping `orders` (the direct match)
+        // on top.
+        let db = Database {
+            backend: "test".to_string(),
+            url_hash: "x".to_string(),
+            fingerprint: None,
+            tables: vec![
+                Table {
+                    schema: None,
+                    name: "orders".to_string(),
+                    comment: None,
+                    columns: vec![
+                        Column {
+                            name: "id".to_string(),
+                            data_type: DataType::Integer,
+                            native_type: "int".to_string(),
+                            nullable: false,
+                            default: None,
+                            comment: None,
+                            ordinal: 0,
+                            sample: None,
+                        },
+                        Column {
+                            name: "customer_id".to_string(),
+                            data_type: DataType::Integer,
+                            native_type: "int".to_string(),
+                            nullable: false,
+                            default: None,
+                            comment: None,
+                            ordinal: 1,
+                            sample: None,
+                        },
+                    ],
+                    primary_key: None,
+                    foreign_keys: vec![ForeignKey {
+                        name: None,
+                        columns: vec!["customer_id".to_string()],
+                        referenced_table: "customers".to_string(),
+                        referenced_columns: vec!["id".to_string()],
+                    }],
+                    row_count_estimate: None,
+                    ddl_hash: None,
+                },
+                Table {
+                    schema: None,
+                    name: "customers".to_string(),
+                    comment: None,
+                    columns: vec![Column {
+                        name: "id".to_string(),
+                        data_type: DataType::Integer,
+                        native_type: "int".to_string(),
+                        nullable: false,
+                        default: None,
+                        comment: None,
+                        ordinal: 0,
+                        sample: None,
+                    }],
+                    primary_key: None,
+                    foreign_keys: vec![],
+                    row_count_estimate: None,
+                    ddl_hash: None,
+                },
+            ],
+        };
+
+        let (text, _tokens) = describe_for_agent(
+            &db,
+            &DescribeOptions {
+                max_tokens: 200,
+                hint: Some("orders".to_string()),
+                tables: None,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let orders_pos = text.find("# orders").expect("orders rendered");
+        let customers_pos = text.find("# customers").expect("customers rendered");
+        assert!(
+            orders_pos < customers_pos,
+            "orders should appear before customers due to FK companion boost:\n{text}"
+        );
     }
 }

@@ -44,6 +44,10 @@ tiktoken-rs.workspace = true
 tokio = { workspace = true, features = ["test-util", "rt-multi-thread", "macros"] }
 tempfile = "3.13"
 
+[[bin]]
+name = "schemadex-diff"
+path = "src/bin/schemadex_diff.rs"
+
 [[bench]]
 name = "cache_refresh"
 path = "benches/cache_refresh.rs"
