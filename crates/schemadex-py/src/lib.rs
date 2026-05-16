@@ -10,8 +10,8 @@ use pyo3::IntoPy;
 
 use schemadex_core::{
     backends, cache::CacheOptions, describe_for_agent as core_describe,
-    resolve_column as core_resolve, DescribeOptions, ResolveResult, SchemaCache as CoreCache,
-    SchemadexError,
+    resolve_column as core_resolve, sampling::SamplingPolicy, DescribeOptions, ResolveResult,
+    SchemaCache as CoreCache, SchemadexError,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -61,13 +61,31 @@ struct PySchemaCache {
 impl PySchemaCache {
     /// Build a cache by introspecting `url`. If a fresh on-disk cache exists,
     /// reuse it; otherwise introspect and persist.
+    ///
+    /// When `sample_values=True`, the postgres backend collects top-K values
+    /// and sentinel flags for each column. The other backends accept the flag
+    /// but currently ignore it (no-op).
     #[staticmethod]
-    #[pyo3(signature = (url, ttl_seconds=None, cache_dir=None, parallel=true))]
+    #[pyo3(signature = (
+        url,
+        ttl_seconds=None,
+        cache_dir=None,
+        parallel=true,
+        sample_values=false,
+        sample_top_k=None,
+        sample_sentinel_threshold=None,
+        sample_rows=None,
+    ))]
+    #[allow(clippy::too_many_arguments)]
     fn from_url(
         url: &str,
         ttl_seconds: Option<u64>,
         cache_dir: Option<String>,
         parallel: bool,
+        sample_values: bool,
+        sample_top_k: Option<usize>,
+        sample_sentinel_threshold: Option<f32>,
+        sample_rows: Option<u64>,
     ) -> PyResult<Self> {
         let url = url.to_string();
         let opts = CacheOptions {
@@ -77,9 +95,24 @@ impl PySchemaCache {
             cache_dir: cache_dir.map(std::path::PathBuf::from),
             parallel,
         };
+        let sampling = if sample_values {
+            let mut policy = SamplingPolicy::default_policy();
+            if let Some(k) = sample_top_k {
+                policy.top_k = k;
+            }
+            if let Some(t) = sample_sentinel_threshold {
+                policy.sentinel_threshold = t;
+            }
+            if let Some(n) = sample_rows {
+                policy.sample_rows = n;
+            }
+            Some(policy)
+        } else {
+            None
+        };
         let cache = rt()
             .block_on(async move {
-                let introspector = backends::connect(&url).await?;
+                let introspector = backends::connect_with_sampling(&url, sampling).await?;
                 CoreCache::from_introspector(&*introspector, &url, &opts).await
             })
             .map_err(map_err)?;

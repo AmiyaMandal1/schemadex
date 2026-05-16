@@ -14,6 +14,10 @@ class SchemaCache:
         ttl_seconds: int | None = None,
         cache_dir: str | None = None,
         parallel: bool = True,
+        sample_values: bool = False,
+        sample_top_k: int | None = None,
+        sample_sentinel_threshold: float | None = None,
+        sample_rows: int | None = None,
     ) -> SchemaCache: ...
     @staticmethod
     def load(url: str, cache_dir: str | None = None) -> SchemaCache | None: ...
