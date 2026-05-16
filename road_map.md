@@ -196,8 +196,8 @@ The list below assumes 0.1.x ships and a few people try it. Items are ordered by
 ### v0.4 — semantic resolution + agent ergonomics (~3 weekends)
 - [x] **Embedding-based fallback for low-confidence matches.** `python/schemadex/embedding_resolve.py` calls Ollama's nomic-embed model when lexical confidence < 0.85. Fixes `review_body → body`; `state → status` was already lexically borderline-OK (commit `a1add54`).
 - [x] **`cache.run_sql(query, token_budget)` method.** New `QueryRunner` trait + `render_table_for_agent` markdown table renderer. Wired through Python `SchemaCache.run_sql(url, sql, token_budget=1024)` (commit `a1add54`).
-- [ ] **Async Python API.** Wrap the existing tokio runtime calls in `pyo3-async-runtimes` to expose `async SchemaCache.from_url_async()`. Win: stops blocking the event loop in async agent frameworks (LangGraph, llama-index).
-- [ ] **MCP server.** Tiny wrapper that exposes `list_tables`, `describe_for_agent`, `resolve_column`, and `run_sql` as MCP tools. One config line in Claude Code / Cursor and the agent has the lot.
+- [x] **Async Python API.** `from_url_async`, `refresh_async`, `refresh_table_async`, `run_sql_async` via `pyo3_async_runtimes::tokio::future_into_py` (commit `749a6f9`).
+- [x] **MCP server.** `schemadex-mcp --url ...` console script + FastMCP server exposing all four tools (commit `749a6f9`).
 
 ### v0.5 — new backends (~4 weekends, order by demand)
 - [ ] **MySQL** via `sqlx-mysql`. Mostly schema-introspection plumbing; PRs welcome.
