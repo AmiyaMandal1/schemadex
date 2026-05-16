@@ -9,10 +9,22 @@ Public API:
     table = cache.get_table("public.users")
     result = cache.resolve("public.users", "user_idd")
     schema_blurb, tokens = cache.describe_for_agent(max_tokens=2000, hint="orders")
+
+Async variants are also available for use from inside an ``asyncio`` event
+loop — they share the same underlying tokio runtime as the sync API and do not
+block the event loop thread:
+
+    import asyncio
+    from schemadex import from_url_async, run_sql_async
+
+    async def main():
+        cache = await from_url_async("sqlite:///tmp/demo.sqlite")
+        rendered, tokens = await run_sql_async(cache, url, "SELECT 1")
 """
 
 from __future__ import annotations
 
+from . import _native
 from ._native import ResolveResult, SchemaCache, __version__
 from .embedding_resolve import resolve_with_embedding
 
@@ -22,6 +34,10 @@ __all__ = [
     "describe_for_agent",
     "resolve",
     "resolve_with_embedding",
+    "from_url_async",
+    "refresh_async",
+    "refresh_table_async",
+    "run_sql_async",
     "__version__",
 ]
 
@@ -51,3 +67,85 @@ def describe_for_agent(
         include_samples=include_samples,
         include_foreign_keys=include_foreign_keys,
     )
+
+
+async def from_url_async(
+    url: str,
+    *,
+    ttl_seconds: int | None = None,
+    cache_dir: str | None = None,
+    parallel: bool = True,
+    sample_values: bool = False,
+    sample_top_k: int | None = None,
+    sample_sentinel_threshold: float | None = None,
+    sample_rows: int | None = None,
+) -> SchemaCache:
+    """Async variant of :meth:`SchemaCache.from_url`.
+
+    Builds a :class:`SchemaCache` by introspecting ``url`` without blocking
+    the calling event-loop thread. The kwargs mirror :meth:`SchemaCache.from_url`.
+    """
+    return await _native.from_url_async(
+        url,
+        ttl_seconds=ttl_seconds,
+        cache_dir=cache_dir,
+        parallel=parallel,
+        sample_values=sample_values,
+        sample_top_k=sample_top_k,
+        sample_sentinel_threshold=sample_sentinel_threshold,
+        sample_rows=sample_rows,
+    )
+
+
+async def refresh_async(
+    cache: SchemaCache,
+    url: str,
+    *,
+    sample_values: bool = False,
+    sample_top_k: int | None = None,
+    sample_sentinel_threshold: float | None = None,
+    sample_rows: int | None = None,
+    parallel: bool = True,
+) -> tuple[list[str], list[str]]:
+    """Async variant of :meth:`SchemaCache.refresh`. Returns ``(changed, unchanged)``."""
+    return await _native.refresh_async(
+        cache,
+        url,
+        sample_values=sample_values,
+        sample_top_k=sample_top_k,
+        sample_sentinel_threshold=sample_sentinel_threshold,
+        sample_rows=sample_rows,
+        parallel=parallel,
+    )
+
+
+async def refresh_table_async(
+    cache: SchemaCache,
+    url: str,
+    table: str,
+    *,
+    sample_values: bool = False,
+    sample_top_k: int | None = None,
+    sample_sentinel_threshold: float | None = None,
+    sample_rows: int | None = None,
+) -> tuple[list[str], list[str]]:
+    """Async variant of :meth:`SchemaCache.refresh_table`. Returns ``(changed, unchanged)``."""
+    return await _native.refresh_table_async(
+        cache,
+        url,
+        table,
+        sample_values=sample_values,
+        sample_top_k=sample_top_k,
+        sample_sentinel_threshold=sample_sentinel_threshold,
+        sample_rows=sample_rows,
+    )
+
+
+async def run_sql_async(
+    cache: SchemaCache,
+    url: str,
+    sql: str,
+    token_budget: int = 1024,
+) -> tuple[str, int]:
+    """Async variant of :meth:`SchemaCache.run_sql`. Returns ``(rendered, token_count)``."""
+    return await _native.run_sql_async(cache, url, sql, token_budget)

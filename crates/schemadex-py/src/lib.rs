@@ -20,15 +20,36 @@ fn map_err(e: SchemadexError) -> PyErr {
     PyRuntimeError::new_err(e.to_string())
 }
 
+/// The tokio runtime that backs both the synchronous (`block_on`) path and the
+/// async (`pyo3_async_runtimes`) path. Initialized once and shared via
+/// `pyo3_async_runtimes::tokio::init_with_runtime` so that both surfaces drive
+/// futures on the same scheduler.
 fn rt() -> &'static tokio::runtime::Runtime {
     use std::sync::OnceLock;
     static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
-    RT.get_or_init(|| {
+    static INIT_ASYNC: OnceLock<()> = OnceLock::new();
+    let runtime = RT.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .expect("failed to start tokio runtime")
-    })
+    });
+    // Hand the same runtime to pyo3-async-runtimes so both surfaces drive
+    // futures on the same scheduler. The runtime reference borrowed from a
+    // `OnceLock<Runtime>` is valid for the lifetime of the process (`'static`)
+    // because the OnceLock is itself `static` and never dropped, so the call
+    // satisfies `init_with_runtime`'s `&'static Runtime` bound directly. The
+    // return is `Err(())` if a previous call already installed a runtime; we
+    // tolerate that (idempotent) so callers can invoke `rt()` freely.
+    INIT_ASYNC.get_or_init(|| {
+        let _ = pyo3_async_runtimes::tokio::init_with_runtime(runtime);
+    });
+    runtime
+}
+
+/// Ensure the runtime is initialized. Cheap to call repeatedly.
+fn ensure_runtime() {
+    let _ = rt();
 }
 
 /// Build a [`SamplingPolicy`] from the Python kwargs that `from_url` /
@@ -358,10 +379,201 @@ fn json_to_py<'py>(py: Python<'py>, v: &serde_json::Value) -> PyResult<Bound<'py
     })
 }
 
+// ---------------------------------------------------------------------------
+// Async variants
+// ---------------------------------------------------------------------------
+//
+// Each async function returns a Python awaitable (via
+// `pyo3_async_runtimes::tokio::future_into_py`). The awaitable is driven by
+// the shared tokio runtime registered in `rt()`.
+//
+// The cache state is guarded by `std::sync::Mutex`, whose `MutexGuard` is not
+// `Send`. To keep the spawned future `Send + 'static` we wrap the lock-holding
+// portion in `tokio::task::spawn_blocking`, which runs on a dedicated blocking
+// thread and is allowed to call `Handle::block_on` to drive the inner async
+// chain (introspector creation + refresh / run_sql). This avoids reworking
+// every existing sync method to use `tokio::sync::Mutex`.
+
+#[pyfunction]
+#[pyo3(signature = (
+    url,
+    ttl_seconds=None,
+    cache_dir=None,
+    parallel=true,
+    sample_values=false,
+    sample_top_k=None,
+    sample_sentinel_threshold=None,
+    sample_rows=None,
+))]
+#[allow(clippy::too_many_arguments)]
+fn from_url_async<'py>(
+    py: Python<'py>,
+    url: String,
+    ttl_seconds: Option<u64>,
+    cache_dir: Option<String>,
+    parallel: bool,
+    sample_values: bool,
+    sample_top_k: Option<usize>,
+    sample_sentinel_threshold: Option<f32>,
+    sample_rows: Option<u64>,
+) -> PyResult<Bound<'py, PyAny>> {
+    ensure_runtime();
+    let opts = CacheOptions {
+        ttl: ttl_seconds
+            .map(Duration::from_secs)
+            .unwrap_or_else(|| Duration::from_secs(24 * 3600)),
+        cache_dir: cache_dir.map(std::path::PathBuf::from),
+        parallel,
+    };
+    let sampling = build_sampling_policy(
+        sample_values,
+        sample_top_k,
+        sample_sentinel_threshold,
+        sample_rows,
+    );
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        let cache = async {
+            let introspector = backends::connect_with_sampling(&url, sampling).await?;
+            CoreCache::from_introspector(&*introspector, &url, &opts).await
+        }
+        .await
+        .map_err(map_err)?;
+        Ok(PySchemaCache {
+            inner: Arc::new(Mutex::new(cache)),
+        })
+    })
+}
+
+#[pyfunction]
+#[pyo3(signature = (
+    cache,
+    url,
+    sample_values=false,
+    sample_top_k=None,
+    sample_sentinel_threshold=None,
+    sample_rows=None,
+    parallel=true,
+))]
+fn refresh_async<'py>(
+    py: Python<'py>,
+    cache: &PySchemaCache,
+    url: String,
+    sample_values: bool,
+    sample_top_k: Option<usize>,
+    sample_sentinel_threshold: Option<f32>,
+    sample_rows: Option<u64>,
+    parallel: bool,
+) -> PyResult<Bound<'py, PyAny>> {
+    ensure_runtime();
+    let sampling = build_sampling_policy(
+        sample_values,
+        sample_top_k,
+        sample_sentinel_threshold,
+        sample_rows,
+    );
+    let inner = Arc::clone(&cache.inner);
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        // The lock guard is `!Send`, so we drive the introspector + refresh
+        // on a blocking task. That task is allowed to call `block_on` on the
+        // current runtime handle because it runs on the blocking thread pool,
+        // not on a worker thread.
+        let report = tokio::task::spawn_blocking(move || {
+            let handle = tokio::runtime::Handle::current();
+            handle.block_on(async move {
+                let introspector = backends::connect_with_sampling(&url, sampling).await?;
+                let mut guard = inner.lock().expect("poisoned");
+                guard.refresh(&*introspector, parallel).await
+            })
+        })
+        .await
+        .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
+        .map_err(map_err)?;
+        Ok((report.changed, report.unchanged))
+    })
+}
+
+#[pyfunction]
+#[pyo3(signature = (
+    cache,
+    url,
+    table,
+    sample_values=false,
+    sample_top_k=None,
+    sample_sentinel_threshold=None,
+    sample_rows=None,
+))]
+fn refresh_table_async<'py>(
+    py: Python<'py>,
+    cache: &PySchemaCache,
+    url: String,
+    table: String,
+    sample_values: bool,
+    sample_top_k: Option<usize>,
+    sample_sentinel_threshold: Option<f32>,
+    sample_rows: Option<u64>,
+) -> PyResult<Bound<'py, PyAny>> {
+    ensure_runtime();
+    let sampling = build_sampling_policy(
+        sample_values,
+        sample_top_k,
+        sample_sentinel_threshold,
+        sample_rows,
+    );
+    let inner = Arc::clone(&cache.inner);
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        let report = tokio::task::spawn_blocking(move || {
+            let handle = tokio::runtime::Handle::current();
+            handle.block_on(async move {
+                let introspector = backends::connect_with_sampling(&url, sampling).await?;
+                let mut guard = inner.lock().expect("poisoned");
+                guard.refresh_table(&*introspector, &table).await
+            })
+        })
+        .await
+        .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
+        .map_err(map_err)?;
+        Ok((report.changed, report.unchanged))
+    })
+}
+
+#[pyfunction]
+#[pyo3(signature = (cache, url, sql, token_budget=1024))]
+fn run_sql_async<'py>(
+    py: Python<'py>,
+    cache: &PySchemaCache,
+    url: String,
+    sql: String,
+    token_budget: usize,
+) -> PyResult<Bound<'py, PyAny>> {
+    ensure_runtime();
+    let inner = Arc::clone(&cache.inner);
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        let result = tokio::task::spawn_blocking(move || {
+            let handle = tokio::runtime::Handle::current();
+            handle.block_on(async move {
+                let runner = backends::connect_runner(&url).await?;
+                let guard = inner.lock().expect("poisoned");
+                guard.run_sql(&*runner, &sql, token_budget).await
+            })
+        })
+        .await
+        .map_err(|e| PyRuntimeError::new_err(e.to_string()))?
+        .map_err(map_err)?;
+        Ok(result)
+    })
+}
+
 #[pymodule]
 fn _native(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Initialize the shared tokio runtime up front so the async surface and
+    // sync surface always agree on which runtime drives futures.
+    ensure_runtime();
     m.add_class::<PySchemaCache>()?;
     m.add_class::<PyResolveResult>()?;
+    m.add_function(wrap_pyfunction!(from_url_async, m)?)?;
+    m.add_function(wrap_pyfunction!(refresh_async, m)?)?;
+    m.add_function(wrap_pyfunction!(refresh_table_async, m)?)?;
+    m.add_function(wrap_pyfunction!(run_sql_async, m)?)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }

@@ -83,10 +83,27 @@ LLM SQL agents fail in the same three ways over and over:
 |----------|--------------------|--------|
 | Postgres | `postgres`         | ✅     |
 | SQLite   | `sqlite`           | ✅     |
-| DuckDB   | `duckdb_backend`   | ✅ (PK/FK omitted) |
+| DuckDB   | `duckdb_backend`   | ✅     |
 | MySQL    | —                  | planned (M8+) |
 | BigQuery | —                  | planned (M8+) |
 | Snowflake | —                 | planned (M8+) |
+
+## MCP server
+
+`schemadex` ships an MCP server. Install with `pip install "schemadex[mcp]"` and wire it into Claude Code by adding to `~/.claude/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "schemadex": {
+      "command": "schemadex-mcp",
+      "args": ["--url", "sqlite:///path/to/db.sqlite"]
+    }
+  }
+}
+```
+
+The agent then has `list_tables`, `describe_for_agent`, `resolve_column`, and `run_sql` tools without any extra wiring.
 
 ## Layout
 

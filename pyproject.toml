@@ -35,12 +35,16 @@ Issues = "https://github.com/AmiyaMandal1/schemadex/issues"
 [project.optional-dependencies]
 langchain = ["langchain-core>=0.2"]
 langgraph = ["langgraph>=0.2"]
+mcp = ["mcp>=1.2"]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
     "ruff>=0.6",
     "maturin>=1.13.3",
 ]
+
+[project.scripts]
+schemadex-mcp = "schemadex.mcp_server:main"
 
 [tool.maturin]
 manifest-path = "crates/schemadex-py/Cargo.toml"

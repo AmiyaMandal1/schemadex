@@ -59,3 +59,40 @@ class SchemaCache:
         sql: str,
         token_budget: int = 1024,
     ) -> tuple[str, int]: ...
+
+# Async free functions. Each returns a coroutine awaitable from an asyncio
+# event loop. They share the same tokio runtime as the synchronous API.
+async def from_url_async(
+    url: str,
+    ttl_seconds: int | None = None,
+    cache_dir: str | None = None,
+    parallel: bool = True,
+    sample_values: bool = False,
+    sample_top_k: int | None = None,
+    sample_sentinel_threshold: float | None = None,
+    sample_rows: int | None = None,
+) -> SchemaCache: ...
+async def refresh_async(
+    cache: SchemaCache,
+    url: str,
+    sample_values: bool = False,
+    sample_top_k: int | None = None,
+    sample_sentinel_threshold: float | None = None,
+    sample_rows: int | None = None,
+    parallel: bool = True,
+) -> tuple[list[str], list[str]]: ...
+async def refresh_table_async(
+    cache: SchemaCache,
+    url: str,
+    table: str,
+    sample_values: bool = False,
+    sample_top_k: int | None = None,
+    sample_sentinel_threshold: float | None = None,
+    sample_rows: int | None = None,
+) -> tuple[list[str], list[str]]: ...
+async def run_sql_async(
+    cache: SchemaCache,
+    url: str,
+    sql: str,
+    token_budget: int = 1024,
+) -> tuple[str, int]: ...
