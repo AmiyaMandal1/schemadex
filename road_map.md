@@ -214,9 +214,9 @@ The list below assumes 0.1.x ships and a few people try it. Items are ordered by
 - [x] **mkdocs site.** `mkdocs.yml` + Material theme + `.github/workflows/docs.yml` auto-deploy to GitHub Pages on push (commit `a64633d`).
 
 ### Stretch / research-mode (no commitment)
-- [ ] **Query-plan-aware ranking.** When the question hints at a JOIN, weight tables that participate in matching FKs higher in `describe_for_agent`.
-- [ ] **Schema diff command.** `schemadex diff --from cache.json --to live` emits a human-readable changelog between two cache snapshots. Useful for "what broke my agent overnight" debugging.
-- [ ] **Learned scoring.** Train a tiny model on `(candidate, real_column, schema_context)` triples to replace Jaro-Winkler's confidence number. Only worth doing once we have real-world miss logs.
-- [ ] **arXiv writeup.** After 3+ months of real-world usage + a real BIRD/Spider table.
+- [x] **Query-plan-aware ranking.** FK-companion boost in `describe_for_agent` when hint present (commit `f104243`).
+- [x] **Schema diff command.** `schemadex-diff --from a.json --to b.json` binary ships markdown changelog (commit `f104243`).
+- [x] ~~**Learned scoring.**~~ *(skipped — needs real-world miss logs from production use; revisit after community feedback.)*
+- [x] ~~**arXiv writeup.**~~ *(skipped — requires 3+ months of real-world usage data first.)*
 
 ---
