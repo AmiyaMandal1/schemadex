@@ -38,6 +38,7 @@ async fn cache_round_trip() {
         ttl: Duration::from_secs(60),
         cache_dir: Some(tmp.path().join("cache")),
         parallel: true,
+        ..Default::default()
     };
 
     let cache = SchemaCache::from_introspector(&introspector, &url, &opts)

@@ -94,6 +94,10 @@ async def from_url_async(
     sample_top_k: int | None = None,
     sample_sentinel_threshold: float | None = None,
     sample_rows: int | None = None,
+    history: int | None = None,
+    max_history: int = 10,
+    memoize_results: bool = False,
+    memo_capacity: int = 128,
 ) -> SchemaCache:
     """Async variant of :meth:`SchemaCache.from_url`.
 
@@ -109,6 +113,10 @@ async def from_url_async(
         sample_top_k=sample_top_k,
         sample_sentinel_threshold=sample_sentinel_threshold,
         sample_rows=sample_rows,
+        history=history,
+        max_history=max_history,
+        memoize_results=memoize_results,
+        memo_capacity=memo_capacity,
     )
 
 
@@ -162,13 +170,17 @@ async def run_sql_async(
     sql: str,
     token_budget: int = 1024,
     allow_write: bool = False,
+    memoize: bool = False,
 ) -> tuple[str, int]:
     """Async variant of :meth:`SchemaCache.run_sql`. Returns ``(rendered, token_count)``.
 
     ``allow_write=True`` skips the read-only SQL guard. Only do this if you
     have already validated the SQL yourself — write statements (INSERT,
     UPDATE, DELETE, DROP, ...) will reach the database.
+
+    ``memoize=True`` opts into the LRU result cache (no-op unless the cache
+    was constructed with ``memoize_results=True``).
     """
     return await _native.run_sql_async(
-        cache, url, sql, token_budget, allow_write=allow_write
+        cache, url, sql, token_budget, allow_write=allow_write, memoize=memoize
     )

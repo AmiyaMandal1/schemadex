@@ -136,6 +136,7 @@ async fn load_from_url(url: &str) -> Result<Database, String> {
         ttl: std::time::Duration::from_secs(24 * 3600),
         cache_dir: Some(tmp.path().to_path_buf()),
         parallel: true,
+        ..Default::default()
     };
     let introspector = schemadex_core::backends::connect_with_sampling(
         url,

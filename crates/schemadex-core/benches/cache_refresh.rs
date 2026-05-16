@@ -26,6 +26,7 @@ async fn main() {
         ttl: Duration::from_secs(3600),
         cache_dir: Some(tmp.path().join("cache")),
         parallel: true,
+        ..Default::default()
     };
 
     // Cold: no cache file yet.

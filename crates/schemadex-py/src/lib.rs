@@ -9,9 +9,14 @@ use pyo3::types::{PyDict, PyList};
 use pyo3::IntoPy;
 
 use schemadex_core::{
-    backends, cache::CacheOptions, describe_for_agent as core_describe,
-    hint_for_error as core_hint_for_error, resolve_column as core_resolve,
-    resolve_column_with_synonyms, sampling::SamplingPolicy, validate_sql as core_validate_sql,
+    backends,
+    cache::{CacheOptions, EmbeddingIndex},
+    describe_for_agent as core_describe,
+    hint_for_error as core_hint_for_error,
+    resolve_column as core_resolve,
+    resolve_column_with_synonyms,
+    sampling::SamplingPolicy,
+    validate_sql as core_validate_sql,
     DescribeOptions, ResolveResult, SchemaCache as CoreCache, SchemadexError, SynonymMap,
 };
 use std::path::PathBuf;
@@ -161,6 +166,10 @@ impl PySchemaCache {
         sample_top_k=None,
         sample_sentinel_threshold=None,
         sample_rows=None,
+        history=None,
+        max_history=10,
+        memoize_results=false,
+        memo_capacity=128,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn from_url(
@@ -172,6 +181,10 @@ impl PySchemaCache {
         sample_top_k: Option<usize>,
         sample_sentinel_threshold: Option<f32>,
         sample_rows: Option<u64>,
+        history: Option<usize>,
+        max_history: usize,
+        memoize_results: bool,
+        memo_capacity: usize,
     ) -> PyResult<Self> {
         let url = url.to_string();
         let opts = CacheOptions {
@@ -180,6 +193,11 @@ impl PySchemaCache {
                 .unwrap_or_else(|| Duration::from_secs(24 * 3600)),
             cache_dir: cache_dir.map(std::path::PathBuf::from),
             parallel,
+            history,
+            max_history,
+            memoize_results,
+            memo_capacity,
+            ..CacheOptions::default()
         };
         let sampling = build_sampling_policy(
             sample_values,
@@ -198,11 +216,29 @@ impl PySchemaCache {
 
     /// Load a previously persisted cache from disk without contacting the DB.
     #[staticmethod]
-    #[pyo3(signature = (url, cache_dir=None))]
-    fn load(url: &str, cache_dir: Option<String>) -> PyResult<Option<Self>> {
+    #[pyo3(signature = (
+        url,
+        cache_dir=None,
+        history=None,
+        max_history=10,
+        memoize_results=false,
+        memo_capacity=128,
+    ))]
+    fn load(
+        url: &str,
+        cache_dir: Option<String>,
+        history: Option<usize>,
+        max_history: usize,
+        memoize_results: bool,
+        memo_capacity: usize,
+    ) -> PyResult<Option<Self>> {
         let url = url.to_string();
         let opts = CacheOptions {
             cache_dir: cache_dir.map(std::path::PathBuf::from),
+            history,
+            max_history,
+            memoize_results,
+            memo_capacity,
             ..CacheOptions::default()
         };
         let cache = rt()
@@ -424,15 +460,20 @@ impl PySchemaCache {
     /// calls, so the first invocation pays the connect cost and later ones
     /// don't.
     ///
+    /// Pass ``memoize=True`` to opt the call into the LRU result cache. The
+    /// cache must have been constructed with ``memoize_results=True`` for
+    /// this kwarg to have any effect — otherwise it's silently a no-op.
+    ///
     /// DuckDB URLs are not supported yet — the QueryRunner trait isn't wired
     /// up for the synchronous duckdb backend.
-    #[pyo3(signature = (url, sql, token_budget=1024, allow_write=false))]
+    #[pyo3(signature = (url, sql, token_budget=1024, allow_write=false, memoize=false))]
     fn run_sql(
         &self,
         url: &str,
         sql: &str,
         token_budget: usize,
         allow_write: bool,
+        memoize: bool,
     ) -> PyResult<(String, usize)> {
         let url = url.to_string();
         let sql = sql.to_string();
@@ -441,13 +482,120 @@ impl PySchemaCache {
             .block_on(async move {
                 let runner = backends::shared_runner(&url).await?;
                 let guard = inner.lock().expect("poisoned");
-                if allow_write {
+                // `memoize=False` should skip the LRU entirely even when the
+                // cache itself has memoization enabled. We honor that by
+                // temporarily peeking at the memo via guard.memo() — when the
+                // caller didn't ask for memoization, fall back to the
+                // unmemoized path. The core `run_sql_unchecked` always
+                // consults the cache's memo, so we need a small bypass here.
+                if !memoize {
+                    // Drop the memo for this call by routing through a
+                    // helper closure that bypasses the memo. Easiest: clear
+                    // any prior hit and use the standard path with
+                    // memoize_results disabled at the cache level. We can't
+                    // mutate options here, so simulate by reading directly.
+                    if allow_write {
+                        run_sql_bypass_memo(&guard, &*runner, &sql, token_budget, true).await
+                    } else {
+                        run_sql_bypass_memo(&guard, &*runner, &sql, token_budget, false).await
+                    }
+                } else if allow_write {
                     guard
                         .run_sql_unchecked(&*runner, &sql, token_budget)
                         .await
                 } else {
                     guard.run_sql(&*runner, &sql, token_budget).await
                 }
+            })
+            .map_err(map_err)
+    }
+
+    /// Persist a column-name embedding index to disk. ``index`` must be a
+    /// dict of shape::
+    ///
+    ///     {
+    ///         "model": "nomic-embed-text-v2-moe",
+    ///         "dim": 768,
+    ///         "by_column": {
+    ///             "public.users": {"id": [...], "email": [...]},
+    ///             ...,
+    ///         },
+    ///     }
+    ///
+    /// The on-disk file lives next to ``database.json.zst`` and is reused by
+    /// :func:`schemadex.resolve_with_embedding` to skip per-call HTTP traffic.
+    fn store_embeddings(&self, index: &Bound<'_, PyDict>) -> PyResult<()> {
+        let idx = py_to_embedding_index(index)?;
+        let inner = Arc::clone(&self.inner);
+        rt()
+            .block_on(async move {
+                let guard = inner.lock().expect("poisoned");
+                guard.store_embeddings(&idx).await
+            })
+            .map_err(map_err)
+    }
+
+    /// Load the on-disk embedding index, if any. Returns ``None`` when no
+    /// index file exists.
+    fn load_embeddings<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        let inner = Arc::clone(&self.inner);
+        let loaded = rt()
+            .block_on(async move {
+                let guard = inner.lock().expect("poisoned");
+                guard.load_embeddings().await
+            })
+            .map_err(map_err)?;
+        match loaded {
+            Some(idx) => Ok(Some(embedding_index_to_py(py, &idx)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Write a snapshot of the current cache into the history directory.
+    /// Returns the path of the written snapshot. Rotates the history
+    /// directory to keep at most ``max_history`` files (from
+    /// ``CacheOptions``). Raises ``RuntimeError`` if the cache has no
+    /// history directory configured.
+    fn snapshot(&self) -> PyResult<String> {
+        let inner = Arc::clone(&self.inner);
+        let path = rt()
+            .block_on(async move {
+                let guard = inner.lock().expect("poisoned");
+                guard.snapshot().await
+            })
+            .map_err(map_err)?;
+        Ok(path.to_string_lossy().to_string())
+    }
+
+    /// List all snapshots stored in the history directory, ordered ascending
+    /// by timestamp. Each entry is a ``(unix_ts, [qualified_table_name, ...])``
+    /// tuple. Returns an empty list when no history is configured or no
+    /// snapshots have been written.
+    fn history(&self) -> PyResult<Vec<(u64, Vec<String>)>> {
+        let inner = Arc::clone(&self.inner);
+        let hist = rt()
+            .block_on(async move {
+                let guard = inner.lock().expect("poisoned");
+                guard.history().await
+            })
+            .map_err(map_err)?;
+        Ok(hist
+            .into_iter()
+            .map(|(ts, db)| (ts, db.list_tables()))
+            .collect())
+    }
+
+    /// Mark a table as stale so the next ``refresh_table`` definitely
+    /// re-introspects it. Raises ``RuntimeError`` if the table is not in the
+    /// cache. Useful for callers wiring Postgres logical replication or
+    /// similar DDL-event streams.
+    fn invalidate_table(&self, table: &str) -> PyResult<()> {
+        let inner = Arc::clone(&self.inner);
+        let table = table.to_string();
+        rt()
+            .block_on(async move {
+                let mut guard = inner.lock().expect("poisoned");
+                guard.invalidate_table(&table).await
             })
             .map_err(map_err)
     }
@@ -575,6 +723,81 @@ impl PySchemaCache {
     }
 }
 
+/// Decode an embedding index from a Python dict. Tolerates missing keys by
+/// defaulting to empty values; raises only on obviously-wrong shapes (e.g.
+/// `by_column` not a mapping).
+fn py_to_embedding_index(d: &Bound<'_, PyDict>) -> PyResult<EmbeddingIndex> {
+    let model: String = match d.get_item("model")? {
+        Some(v) => v.extract()?,
+        None => String::new(),
+    };
+    let dim: usize = match d.get_item("dim")? {
+        Some(v) => v.extract()?,
+        None => 0,
+    };
+    let mut by_column: std::collections::BTreeMap<
+        String,
+        std::collections::BTreeMap<String, Vec<f32>>,
+    > = Default::default();
+    if let Some(by_col) = d.get_item("by_column")? {
+        let tbl_dict: &Bound<PyDict> = by_col.downcast()?;
+        for (tbl_key, cols_val) in tbl_dict.iter() {
+            let tbl_name: String = tbl_key.extract()?;
+            let cols_dict: &Bound<PyDict> = cols_val.downcast()?;
+            let mut col_map: std::collections::BTreeMap<String, Vec<f32>> = Default::default();
+            for (col_key, vec_val) in cols_dict.iter() {
+                let col_name: String = col_key.extract()?;
+                let vec: Vec<f32> = vec_val.extract()?;
+                col_map.insert(col_name, vec);
+            }
+            by_column.insert(tbl_name, col_map);
+        }
+    }
+    Ok(EmbeddingIndex {
+        model,
+        dim,
+        by_column,
+    })
+}
+
+fn embedding_index_to_py<'py>(
+    py: Python<'py>,
+    idx: &EmbeddingIndex,
+) -> PyResult<Bound<'py, PyDict>> {
+    let d = PyDict::new_bound(py);
+    d.set_item("model", &idx.model)?;
+    d.set_item("dim", idx.dim)?;
+    let by_col = PyDict::new_bound(py);
+    for (tbl, cols) in &idx.by_column {
+        let cols_dict = PyDict::new_bound(py);
+        for (col, vec) in cols {
+            cols_dict.set_item(col, vec.clone())?;
+        }
+        by_col.set_item(tbl, cols_dict)?;
+    }
+    d.set_item("by_column", by_col)?;
+    Ok(d)
+}
+
+/// Drive `run_sql` without consulting the memo cache. Used when the caller
+/// passes `memoize=False` even though the cache was constructed with
+/// memoization enabled — we forward to the runner directly and skip the
+/// cache lookup / insert.
+async fn run_sql_bypass_memo(
+    guard: &CoreCache,
+    runner: &dyn schemadex_core::QueryRunner,
+    sql: &str,
+    token_budget: usize,
+    allow_write: bool,
+) -> schemadex_core::Result<(String, usize)> {
+    if !allow_write {
+        schemadex_core::assert_readonly(sql)?;
+    }
+    let _ = guard; // memo bypass — schema metadata isn't consulted here.
+    let result = runner.run_sql(sql, 200).await?;
+    schemadex_core::render_table_for_agent(&result, token_budget)
+}
+
 fn json_to_py<'py>(py: Python<'py>, v: &serde_json::Value) -> PyResult<Bound<'py, PyAny>> {
     use serde_json::Value;
     Ok(match v {
@@ -635,6 +858,10 @@ fn json_to_py<'py>(py: Python<'py>, v: &serde_json::Value) -> PyResult<Bound<'py
     sample_top_k=None,
     sample_sentinel_threshold=None,
     sample_rows=None,
+    history=None,
+    max_history=10,
+    memoize_results=false,
+    memo_capacity=128,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn from_url_async<'py>(
@@ -647,6 +874,10 @@ fn from_url_async<'py>(
     sample_top_k: Option<usize>,
     sample_sentinel_threshold: Option<f32>,
     sample_rows: Option<u64>,
+    history: Option<usize>,
+    max_history: usize,
+    memoize_results: bool,
+    memo_capacity: usize,
 ) -> PyResult<Bound<'py, PyAny>> {
     ensure_runtime();
     let opts = CacheOptions {
@@ -655,6 +886,11 @@ fn from_url_async<'py>(
             .unwrap_or_else(|| Duration::from_secs(24 * 3600)),
         cache_dir: cache_dir.map(std::path::PathBuf::from),
         parallel,
+        history,
+        max_history,
+        memoize_results,
+        memo_capacity,
+        ..CacheOptions::default()
     };
     let sampling = build_sampling_policy(
         sample_values,
@@ -766,7 +1002,7 @@ fn refresh_table_async<'py>(
 }
 
 #[pyfunction]
-#[pyo3(signature = (cache, url, sql, token_budget=1024, allow_write=false))]
+#[pyo3(signature = (cache, url, sql, token_budget=1024, allow_write=false, memoize=false))]
 fn run_sql_async<'py>(
     py: Python<'py>,
     cache: &PySchemaCache,
@@ -774,6 +1010,7 @@ fn run_sql_async<'py>(
     sql: String,
     token_budget: usize,
     allow_write: bool,
+    memoize: bool,
 ) -> PyResult<Bound<'py, PyAny>> {
     ensure_runtime();
     let inner = Arc::clone(&cache.inner);
@@ -783,7 +1020,9 @@ fn run_sql_async<'py>(
             handle.block_on(async move {
                 let runner = backends::shared_runner(&url).await?;
                 let guard = inner.lock().expect("poisoned");
-                if allow_write {
+                if !memoize {
+                    run_sql_bypass_memo(&guard, &*runner, &sql, token_budget, allow_write).await
+                } else if allow_write {
                     guard
                         .run_sql_unchecked(&*runner, &sql, token_budget)
                         .await

@@ -18,9 +18,20 @@ class SchemaCache:
         sample_top_k: int | None = None,
         sample_sentinel_threshold: float | None = None,
         sample_rows: int | None = None,
+        history: int | None = None,
+        max_history: int = 10,
+        memoize_results: bool = False,
+        memo_capacity: int = 128,
     ) -> SchemaCache: ...
     @staticmethod
-    def load(url: str, cache_dir: str | None = None) -> SchemaCache | None: ...
+    def load(
+        url: str,
+        cache_dir: str | None = None,
+        history: int | None = None,
+        max_history: int = 10,
+        memoize_results: bool = False,
+        memo_capacity: int = 128,
+    ) -> SchemaCache | None: ...
     def list_tables(self) -> list[str]: ...
     def get_table(self, name: str) -> dict[str, Any] | None: ...
     def resolve(self, table: str, candidate: str) -> ResolveResult: ...
@@ -65,7 +76,13 @@ class SchemaCache:
         sql: str,
         token_budget: int = 1024,
         allow_write: bool = False,
+        memoize: bool = False,
     ) -> tuple[str, int]: ...
+    def store_embeddings(self, index: dict[str, Any]) -> None: ...
+    def load_embeddings(self) -> dict[str, Any] | None: ...
+    def snapshot(self) -> str: ...
+    def history(self) -> list[tuple[int, list[str]]]: ...
+    def invalidate_table(self, table: str) -> None: ...
 
 # Async free functions. Each returns a coroutine awaitable from an asyncio
 # event loop. They share the same tokio runtime as the synchronous API.
@@ -78,6 +95,10 @@ async def from_url_async(
     sample_top_k: int | None = None,
     sample_sentinel_threshold: float | None = None,
     sample_rows: int | None = None,
+    history: int | None = None,
+    max_history: int = 10,
+    memoize_results: bool = False,
+    memo_capacity: int = 128,
 ) -> SchemaCache: ...
 async def refresh_async(
     cache: SchemaCache,
@@ -103,6 +124,7 @@ async def run_sql_async(
     sql: str,
     token_budget: int = 1024,
     allow_write: bool = False,
+    memoize: bool = False,
 ) -> tuple[str, int]: ...
 def clear_pool_cache() -> None: ...
 def pool_size() -> int: ...

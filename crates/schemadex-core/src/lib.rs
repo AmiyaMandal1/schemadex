@@ -13,6 +13,7 @@ pub mod examples;
 pub mod fingerprint;
 pub mod hint;
 pub mod introspector;
+pub mod memo;
 pub mod model;
 pub mod resolve;
 pub mod safety;
@@ -28,7 +29,8 @@ pub mod otel;
 pub use crate::otel::init_otel;
 
 pub use crate::agent::{describe_for_agent, DescribeOptions};
-pub use crate::cache::SchemaCache;
+pub use crate::cache::{EmbeddingIndex, SchemaCache, INVALIDATED_DDL_HASH};
+pub use crate::memo::{CachedResult, ResultCache};
 pub use crate::error::{Result, SchemadexError};
 pub use crate::examples::{generate_examples, generate_examples_for_database};
 pub use crate::hint::{hint_for_error, ErrorHint, HintKind};
@@ -194,6 +196,23 @@ impl SchemaCache {
         sql: &str,
         token_budget: usize,
     ) -> Result<(String, usize)> {
+        // Item 3: optional LRU memoization, keyed by (fingerprint, sql).
+        // Only when the cache was constructed with `memoize_results = true`
+        // and we have a fingerprint to key against. `token_budget` is *not*
+        // part of the key on purpose — a hit returns the cached render and
+        // its precomputed token count; callers who need different budgets
+        // can re-run uncached.
+        let memo_key = self
+            .memo()
+            .as_ref()
+            .and_then(|_| self.database().fingerprint.clone());
+        if let (Some(memo), Some(fp)) = (self.memo(), memo_key.as_ref()) {
+            if let Some(hit) = memo.get(fp, sql) {
+                tracing::debug!(sql_len = sql.len(), "schema_cache.run_sql.memo_hit");
+                return Ok((hit.rendered, hit.tokens));
+            }
+        }
+
         let result = runner.run_sql(sql, 200).await?;
         tracing::debug!(
             rows = result.rows.len(),
@@ -201,7 +220,19 @@ impl SchemaCache {
             truncated = result.truncated,
             "schema_cache.run_sql.fetched"
         );
-        render_table_for_agent(&result, token_budget)
+        let (rendered, tokens) = render_table_for_agent(&result, token_budget)?;
+
+        if let (Some(memo), Some(fp)) = (self.memo(), memo_key.as_ref()) {
+            memo.put(
+                fp,
+                sql,
+                crate::memo::CachedResult {
+                    rendered: rendered.clone(),
+                    tokens,
+                },
+            );
+        }
+        Ok((rendered, tokens))
     }
 
     /// Streaming variant of [`SchemaCache::run_sql`]. The runner consumes
