@@ -182,7 +182,7 @@ The list below assumes 0.1.x ships and a few people try it. Items are ordered by
 
 ### v0.2 — close obvious holes (~2 weekends)
 - [x] **Linux aarch64 wheel.** Swapped sqlx TLS backend `rustls → native-tls` and re-added `aarch64` to the linux + musllinux matrices (commit `6f47bc1`). Apple Silicon and Graviton users get a wheel on the next tag.
-- [ ] **DuckDB PK/FK introspection.** Today the DuckDB backend returns `None` / empty for `primary_key` / `foreign_keys`. Wire `duckdb_constraints()` (DuckDB ≥0.10) and add a per-table integration test.
+- [x] **DuckDB PK/FK introspection.** Wired `duckdb_constraints()` with `array_to_string` to flatten `VARCHAR[]` since the duckdb crate has no `Vec<String>: FromSql`. New `integration_duckdb.rs` test (commit `b31ec58`).
 - [ ] **`sample_values=True` exposed at Python level.** Rust has `PostgresIntrospector::with_sampling`; Python `SchemaCache.from_url` cannot trigger sampling. Add `sample_values: bool = False` + `sample_policy` kwargs.
 - [ ] **Sentinel-flag plumbed into `describe_for_agent`.** Already rendered, but only when samples were collected — without sampling, the bench cannot measure the sentinel contribution. Tied to the previous item.
 - [ ] **Per-table `refresh(table=...)` on Python API.** Rust core supports incremental refresh; Python only exposes the full-cache build. Add `cache.refresh()` and `cache.refresh_table("orders")`.
