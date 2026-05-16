@@ -14,11 +14,13 @@ categories = ["database", "development-tools"]
 
 [features]
 default = []
-# `dep:openssl-sys` pulls in a vendored OpenSSL build so the manylinux_2_28
-# wheel doesn't need a system OpenSSL installed in the build container.
-postgres = ["sqlx/postgres", "sqlx/runtime-tokio-native-tls", "dep:openssl-sys"]
-sqlite = ["sqlx/sqlite", "sqlx/runtime-tokio-native-tls", "dep:openssl-sys"]
-mysql = ["sqlx/mysql", "sqlx/runtime-tokio-native-tls", "dep:openssl-sys"]
+# `openssl/vendored` forces a statically-linked OpenSSL build so the
+# manylinux_2_28 wheel doesn't need system libssl-dev in the maturin
+# build container. Routed through the `openssl` crate (high-level) so
+# the feature unifies cleanly with native-tls's openssl-sys path.
+postgres = ["sqlx/postgres", "sqlx/runtime-tokio-native-tls", "openssl/vendored"]
+sqlite = ["sqlx/sqlite", "sqlx/runtime-tokio-native-tls", "openssl/vendored"]
+mysql = ["sqlx/mysql", "sqlx/runtime-tokio-native-tls", "openssl/vendored"]
 duckdb_backend = ["dep:duckdb"]
 bigquery = ["dep:gcp-bigquery-client"]
 snowflake = ["dep:reqwest", "dep:jsonwebtoken", "dep:base64", "dep:rsa"]
@@ -53,7 +55,7 @@ regex.workspace = true
 zstd.workspace = true
 tiberius = { version = "0.12", default-features = false, features = ["tds73", "rustls"], optional = true }
 tokio-util = { version = "0.7", features = ["compat"], optional = true }
-openssl-sys = { version = "0.9", features = ["vendored"], optional = true }
+openssl = { version = "0.10", optional = true }
 gcp-bigquery-client = { version = "0.28", default-features = false, features = ["rust-tls", "ring"], optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
 jsonwebtoken = { version = "9", optional = true }
