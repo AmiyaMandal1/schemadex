@@ -129,13 +129,91 @@ impl SchemaIntrospector for DuckDbIntrospector {
         .map_err(|e| SchemadexError::Other(format!("duckdb join: {e}")))?
     }
 
-    async fn primary_key(&self, _schema: Option<&str>, _table: &str) -> Result<Option<PrimaryKey>> {
-        // DuckDB's `information_schema.key_column_usage` exists in recent versions
-        // but isn't on every install — keep it absent for now.
-        Ok(None)
+    async fn primary_key(&self, schema: Option<&str>, table: &str) -> Result<Option<PrimaryKey>> {
+        let conn = self.conn.clone();
+        let schema = schema
+            .map(str::to_string)
+            .unwrap_or_else(|| "main".to_string());
+        let table = table.to_string();
+        tokio::task::spawn_blocking(move || {
+            let guard = conn
+                .lock()
+                .map_err(|_| SchemadexError::Other("duckdb lock poisoned".to_string()))?;
+            // `constraint_column_names` is a VARCHAR[]; serialize to a delimited
+            // string so the duckdb crate gives us a single `String` back
+            // (Vec<String> is not `FromSql`).
+            let mut stmt = guard.prepare(
+                "SELECT array_to_string(constraint_column_names, '\u{1f}') \
+                 FROM duckdb_constraints() \
+                 WHERE schema_name = ? AND table_name = ? AND constraint_type = 'PRIMARY KEY'",
+            )?;
+            let rows = stmt
+                .query_map(params![schema, table], |r| r.get::<_, Option<String>>(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            let joined: Option<String> = rows.into_iter().flatten().next();
+            match joined {
+                Some(s) if !s.is_empty() => Ok(Some(PrimaryKey {
+                    name: None,
+                    columns: s.split('\u{1f}').map(str::to_string).collect(),
+                })),
+                _ => Ok(None),
+            }
+        })
+        .await
+        .map_err(|e| SchemadexError::Other(format!("duckdb join: {e}")))?
     }
 
-    async fn foreign_keys(&self, _schema: Option<&str>, _table: &str) -> Result<Vec<ForeignKey>> {
-        Ok(Vec::new())
+    async fn foreign_keys(&self, schema: Option<&str>, table: &str) -> Result<Vec<ForeignKey>> {
+        let conn = self.conn.clone();
+        let schema = schema
+            .map(str::to_string)
+            .unwrap_or_else(|| "main".to_string());
+        let table = table.to_string();
+        tokio::task::spawn_blocking(move || {
+            let guard = conn
+                .lock()
+                .map_err(|_| SchemadexError::Other("duckdb lock poisoned".to_string()))?;
+            let mut stmt = guard.prepare(
+                "SELECT constraint_name, \
+                        array_to_string(constraint_column_names, '\u{1f}'), \
+                        referenced_table, \
+                        array_to_string(referenced_column_names, '\u{1f}') \
+                 FROM duckdb_constraints() \
+                 WHERE schema_name = ? AND table_name = ? AND constraint_type = 'FOREIGN KEY'",
+            )?;
+            let rows = stmt
+                .query_map(params![schema, table], |r| {
+                    Ok((
+                        r.get::<_, Option<String>>(0)?,
+                        r.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                        r.get::<_, String>(2)?,
+                        r.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                    ))
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(rows
+                .into_iter()
+                .map(|(name, columns_joined, referenced_table, referenced_columns_joined)| {
+                    let columns = columns_joined
+                        .split('\u{1f}')
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
+                        .collect();
+                    let referenced_columns = referenced_columns_joined
+                        .split('\u{1f}')
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
+                        .collect();
+                    ForeignKey {
+                        name,
+                        columns,
+                        referenced_table,
+                        referenced_columns,
+                    }
+                })
+                .collect())
+        })
+        .await
+        .map_err(|e| SchemadexError::Other(format!("duckdb join: {e}")))?
     }
 }
