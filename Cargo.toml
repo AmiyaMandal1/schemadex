@@ -28,7 +28,7 @@ hex = "0.4"
 dirs = "5.0"
 url = "2.5"
 tracing = "0.1"
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "macros"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "macros", "tls-native-tls"] }
 duckdb = { version = "1.1", features = ["bundled"] }
 pyo3 = { version = "0.22", features = ["extension-module", "abi3-py39"] }
 pyo3-async-runtimes = { version = "0.22", features = ["tokio-runtime"] }

@@ -14,8 +14,8 @@ categories = ["database", "development-tools"]
 
 [features]
 default = []
-postgres = ["sqlx/postgres", "sqlx/runtime-tokio-rustls"]
-sqlite = ["sqlx/sqlite", "sqlx/runtime-tokio-rustls"]
+postgres = ["sqlx/postgres", "sqlx/runtime-tokio-native-tls"]
+sqlite = ["sqlx/sqlite", "sqlx/runtime-tokio-native-tls"]
 duckdb_backend = ["dep:duckdb"]
 
 [dependencies]
