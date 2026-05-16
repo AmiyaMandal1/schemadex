@@ -70,6 +70,10 @@ tempfile = "3.13"
 name = "schemadex-diff"
 path = "src/bin/schemadex_diff.rs"
 
+[[bin]]
+name = "schemadex-api-audit"
+path = "src/bin/schemadex_api_audit.rs"
+
 [[bench]]
 name = "cache_refresh"
 path = "benches/cache_refresh.rs"

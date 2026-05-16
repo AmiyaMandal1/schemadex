@@ -4,6 +4,14 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+### Documentation
+- v1.0 stability commitment: added `docs/semver.md` (public API surface +
+  what counts as breaking), `docs/migration-0.x-to-1.0.md` (placeholder to
+  fill in as 1.0 PRs land), and `docs/deprecation.md` (deprecation
+  process).
+- New `schemadex-api-audit` binary in `schemadex-core` that prints the
+  locked-in public symbol list as JSON for pre-1.0 review.
+
 ## [0.1.1] - 2026-05-16
 
 ### Fixed
