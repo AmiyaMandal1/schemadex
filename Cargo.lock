@@ -2959,7 +2959,7 @@ dependencies = [
 
 [[package]]
 name = "schemadex-core"
-version = "0.1.1"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2997,7 +2997,7 @@ dependencies = [
 
 [[package]]
 name = "schemadex-py"
-version = "0.1.1"
+version = "1.0.0"
 dependencies = [
  "pyo3",
  "pyo3-async-runtimes",
