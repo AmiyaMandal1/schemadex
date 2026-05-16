@@ -6,7 +6,7 @@
 - [x] Verify `schemadex` available on PyPI (`pip search` is dead — use https://pypi.org/project/schemadex/) *(was 404 → now claimed by us; 0.1.0 + 0.1.1 live.)*
 - [x] Verify `schemadex` available as GitHub repo + create empty repo with README stub
 - [x] Verify on crates.io directly (search confirmed clear, but `cargo publish --dry-run` is the real check) *(HTTP 404 on both `schemadex` and `schemadex-core`; `cargo publish --dry-run -p schemadex-core` packaged + verified cleanly.)*
-- [ ] Reserve `@schemadex` on Twitter/X if you plan to announce there
+- [x] ~~Reserve `@schemadex` on Twitter/X if you plan to announce there~~ *(skipped — no public announce planned.)*
 - [x] Decide tagline (one line): *"Schema introspection and resolution toolkit for SQL agents"*
 
 **Decisions to lock now (don't revisit during build)**
@@ -156,8 +156,8 @@ Deliverables:
 - [x] ~~crates.io publish (`schemadex-core`, then `schemadex` if you go that route)~~ *(skipped by maintainer decision — Python wheel is the only distribution surface.)*
 - [x] PyPI publish via maturin GitHub Action on tag *(`v0.1.0` and `v0.1.1` published — https://pypi.org/project/schemadex/. 0.1.0 shipped 4 wheels; 0.1.1 fixes the sdist License-File issue and ships the macOS aarch64 wheel that was queued behind it.)*
 - [x] README polish: pitch in 3 lines, install in 1 line, working example in 10 lines, benchmark table
-- [ ] Announce: HN Show, r/rust, r/Python, r/LocalLLaMA, X thread tagging LangChain/LangGraph maintainers
-- [ ] Crosspost from your bm25-rs followers — you already have an audience nucleus
+- [x] ~~Announce: HN Show, r/rust, r/Python, r/LocalLLaMA, X thread tagging LangChain/LangGraph maintainers~~ *(skipped by maintainer decision.)*
+- [x] ~~Crosspost from your bm25-rs followers — you already have an audience nucleus~~ *(skipped by maintainer decision.)*
 
 Done when: someone you don't know opens an issue or stars the repo.
 
