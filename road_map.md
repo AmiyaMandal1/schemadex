@@ -211,6 +211,12 @@ The list below assumes 0.1.x ships and a few people try it. Items are ordered by
 - [x] **Read-only enforcement on `run_sql`.** New `core::safety::assert_readonly` rejects non-SELECT statements (incl. EXPLAIN-wrapped writes + semicolon-compound writes). `allow_write=True` escape hatch on the Python surface (commit `b2607ec`).
 - [x] **Connection pool reuse.** Process-wide `OnceLock<Mutex<HashMap<url, Arc<dyn QueryRunner>>>>` via `backends::shared_runner`. Repeated `run_sql` skips the pool handshake (commit `b2607ec`).
 
+### v0.7 — agent UX (~3 weekends)
+- [x] **SQL pre-validation.** `core::validate::validate_sql(db, sql)` regex-parses tables + columns, fuzzy-suggests on misses. `SchemaCache::run_sql_validated` + Python `cache.validate_sql(sql)` (commit `be1caf9`).
+- [x] **Error-to-hint wrapping.** `core::hint::hint_for_error` pattern-matches Postgres/SQLite/MySQL error texts and returns a `{kind, original, suggested, confidence, human_message}` struct (commit `be1caf9`).
+- [x] **Synonym dictionary.** `SynonymMap` loadable from `.schemadex/synonyms.yaml`; `resolve_column_with_synonyms` short-circuits with confidence 1.0; Python `cache.resolve(... synonyms_path=)` (commit `be1caf9`).
+- [x] **JSON Schema tool definitions for MCP.** Annotated FastMCP tools with explicit descriptions + bounds; new `validate_sql` + `hint_for_error` tools; `schemadex-mcp --print-schemas` flag (commit `be1caf9`).
+
 ### Observability, safety, distribution (chip away in parallel)
 - [x] **`tracing` spans** on cache + every backend method; `RUST_LOG=schemadex=info,sqlx=warn` recipe documented (commit `a64633d`).
 - [x] **Sample-value redaction policy.** `RedactionPolicy::default_pii()` enabled by default on `SamplingPolicy::default_policy` (commit `a64633d`).
