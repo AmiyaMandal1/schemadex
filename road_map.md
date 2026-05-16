@@ -55,7 +55,7 @@ Milestone-anchored, not date-anchored, since your capacity is variable. Each mil
 Deliverables:
 - [x] Workspace builds end-to-end
 - [x] Empty wheel publishes to TestPyPI via CI *(superseded — real `v0.1.0` wheels already on PyPI; TestPyPI rc workflow stays available in `release.yml` for future pre-releases.)*
-- [ ] Empty crate publishes to crates.io as a placeholder version (claims the name) *(blocked on `CARGO_REGISTRY_TOKEN`; name still unclaimed per HTTP 404 + dry-run packaging clean.)*
+- [x] ~~Empty crate publishes to crates.io as a placeholder version (claims the name)~~ *(skipped by maintainer decision — no crates.io publish; Rust users build `schemadex-core` from the git workspace.)*
 - [x] README has the pitch, install command (even if it errors at runtime), and roadmap link
 
 Done when: someone can `pip install -i https://test.pypi.org/simple/ schemadex` and `import schemadex` without an ImportError. ✅ — superseded by real PyPI publish: `pip install schemadex` is already live.
@@ -153,7 +153,7 @@ Done when: README has a defensible numbers table that survives "but how did you 
 **Tag:** `v0.1.0` (no suffix) · **Estimated:** 1 weekend
 
 Deliverables:
-- [ ] crates.io publish (`schemadex-core`, then `schemadex` if you go that route) *(awaiting `CARGO_REGISTRY_TOKEN` secret; `cargo publish --dry-run -p schemadex-core` already passes)*
+- [x] ~~crates.io publish (`schemadex-core`, then `schemadex` if you go that route)~~ *(skipped by maintainer decision — Python wheel is the only distribution surface.)*
 - [x] PyPI publish via maturin GitHub Action on tag *(`v0.1.0` and `v0.1.1` published — https://pypi.org/project/schemadex/. 0.1.0 shipped 4 wheels; 0.1.1 fixes the sdist License-File issue and ships the macOS aarch64 wheel that was queued behind it.)*
 - [x] README polish: pitch in 3 lines, install in 1 line, working example in 10 lines, benchmark table
 - [ ] Announce: HN Show, r/rust, r/Python, r/LocalLLaMA, X thread tagging LangChain/LangGraph maintainers

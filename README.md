@@ -11,10 +11,10 @@ pip install schemadex                            # core + all backends
 pip install "schemadex[langchain,langgraph]"     # with framework adapters
 ```
 
-Rust:
+Rust (git, not crates.io):
 
 ```toml
-schemadex-core = { version = "0.1", features = ["postgres", "sqlite", "duckdb_backend"] }
+schemadex-core = { git = "https://github.com/AmiyaMandal1/schemadex", features = ["postgres", "sqlite", "duckdb_backend"] }
 ```
 
 ## 10-line example
