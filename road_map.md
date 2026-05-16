@@ -181,7 +181,7 @@ Order by user demand, not by your interest:
 The list below assumes 0.1.x ships and a few people try it. Items are ordered by ratio of *impact / effort*, not by personal interest. Each row names a tag, the user-visible win, and the smallest task that unblocks the rest.
 
 ### v0.2 — close obvious holes (~2 weekends)
-- [ ] **Linux aarch64 wheel.** Currently dropped from the matrix because `ring` fails cross-compile. Either swap `sqlx`'s TLS backend to `runtime-tokio-native-tls` (vendored OpenSSL) or move to `aws-lc-rs`. Win: Apple Silicon + Graviton users stop building from source.
+- [x] **Linux aarch64 wheel.** Swapped sqlx TLS backend `rustls → native-tls` and re-added `aarch64` to the linux + musllinux matrices (commit `6f47bc1`). Apple Silicon and Graviton users get a wheel on the next tag.
 - [ ] **DuckDB PK/FK introspection.** Today the DuckDB backend returns `None` / empty for `primary_key` / `foreign_keys`. Wire `duckdb_constraints()` (DuckDB ≥0.10) and add a per-table integration test.
 - [ ] **`sample_values=True` exposed at Python level.** Rust has `PostgresIntrospector::with_sampling`; Python `SchemaCache.from_url` cannot trigger sampling. Add `sample_values: bool = False` + `sample_policy` kwargs.
 - [ ] **Sentinel-flag plumbed into `describe_for_agent`.** Already rendered, but only when samples were collected — without sampling, the bench cannot measure the sentinel contribution. Tied to the previous item.
