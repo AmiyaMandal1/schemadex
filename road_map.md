@@ -194,8 +194,8 @@ The list below assumes 0.1.x ships and a few people try it. Items are ordered by
 - [x] **BIRD-mini wiring.** `run_bird_mini.py` lands as a stdlib-HTTP stub gated on `$ANTHROPIC_API_KEY` / `$OPENAI_API_KEY` (commit `38191f3`).
 
 ### v0.4 — semantic resolution + agent ergonomics (~3 weekends)
-- [ ] **Embedding-based fallback for low-confidence matches.** When Jaro-Winkler scores below 0.85, query a local embedding model (the existing `nomic-embed-text-v2-moe` on the user's Ollama would do) and re-rank. Tied: figures out `state` → `status` and `body` → `review_body`, the two synthetic misses.
-- [ ] **`cache.run_sql(query, token_budget)` method.** Execute a query through the cached connection, paginate, and truncate the result table to fit a token budget. This is the second-most-asked agent ergonomic after schema discovery.
+- [x] **Embedding-based fallback for low-confidence matches.** `python/schemadex/embedding_resolve.py` calls Ollama's nomic-embed model when lexical confidence < 0.85. Fixes `review_body → body`; `state → status` was already lexically borderline-OK (commit `a1add54`).
+- [x] **`cache.run_sql(query, token_budget)` method.** New `QueryRunner` trait + `render_table_for_agent` markdown table renderer. Wired through Python `SchemaCache.run_sql(url, sql, token_budget=1024)` (commit `a1add54`).
 - [ ] **Async Python API.** Wrap the existing tokio runtime calls in `pyo3-async-runtimes` to expose `async SchemaCache.from_url_async()`. Win: stops blocking the event loop in async agent frameworks (LangGraph, llama-index).
 - [ ] **MCP server.** Tiny wrapper that exposes `list_tables`, `describe_for_agent`, `resolve_column`, and `run_sql` as MCP tools. One config line in Claude Code / Cursor and the agent has the lot.
 
