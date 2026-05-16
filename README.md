@@ -45,7 +45,7 @@ LLM SQL agents fail in the same three ways over and over:
 
 - **Resolution**: `resolve_column(table, candidate)` returns a confidence + alternatives instead of letting the agent guess.
 - **Sampling**: `sample_values=True` collects top-K, percentiles, and flags any value over 40% frequency as a sentinel.
-- **Cache**: introspect once, persist to `~/.cache/schemadex/<db>/`, refresh on DDL change. Warm reads are ~100× cold.
+- **Cache**: introspect once, persist to `~/.cache/schemadex/<db>/`, refresh on DDL change. On a local 50-table SQLite, warm reads are ~47× cold (`cargo bench --bench cache_refresh`); on remote Postgres the ratio grows since cold is network-bound.
 
 ## Backends
 

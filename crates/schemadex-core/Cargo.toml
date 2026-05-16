@@ -39,3 +39,9 @@ tiktoken-rs.workspace = true
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "rt-multi-thread", "macros"] }
 tempfile = "3.13"
+
+[[bench]]
+name = "cache_refresh"
+path = "benches/cache_refresh.rs"
+harness = false
+required-features = ["sqlite"]
