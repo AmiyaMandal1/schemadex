@@ -1,0 +1,32 @@
+[
+  {
+    "question": "What is the most common delay_code on outages?",
+    "table": "outages",
+    "gold_column": "delay_code",
+    "gold_answer": "No Delay"
+  },
+  {
+    "question": "Are there any outages with no delay? If so, what's the dominant code?",
+    "table": "outages",
+    "gold_column": "delay_code",
+    "gold_answer": "No Delay"
+  },
+  {
+    "question": "Which delay_code value appears most frequently in the outages table?",
+    "table": "outages",
+    "gold_column": "delay_code",
+    "gold_answer": "No Delay"
+  },
+  {
+    "question": "If I look at outages.delay_code, what is the modal (most common) value?",
+    "table": "outages",
+    "gold_column": "delay_code",
+    "gold_answer": "No Delay"
+  },
+  {
+    "question": "On the outages table, what value dominates the delay_code column?",
+    "table": "outages",
+    "gold_column": "delay_code",
+    "gold_answer": "No Delay"
+  }
+]
