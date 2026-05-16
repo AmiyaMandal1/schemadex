@@ -43,3 +43,35 @@ python compare.py
 ## Reporting policy
 
 Whatever the numbers are, we publish them. If `schemadex` doesn't help, the README says so.
+
+## Synthetic adversarial corpus
+
+The full BIRD/Spider harness needs an LLM API key. To give honest numbers for the **resolution path** without one, we ship a synthetic corpus and a deterministic chooser.
+
+- **Corpus:** `benches/agent-success/synthetic_corpus.json`, 38 records covering case flips (`Id`, `ID`), underscore drift (`firstname` vs `first_name`), plural drift (`regions`, `currencies`), and semantic near-misses (`state` for `status`, `product_name` for `name`).
+- **Schema:** `benches/agent-success/synthetic_schema.sql`, five tables, ~30 columns.
+- **Baseline chooser:** literal lookup — the candidate succeeds iff it is exactly a column on the table.
+- **Treatment chooser:** `SchemaCache.resolve(table, candidate)`, accept if `confidence >= 0.85`.
+
+Reproduce:
+
+```bash
+python benches/agent-success/synthetic_corpus.py
+python benches/agent-success/run_synthetic.py
+```
+
+Output (committed under `benches/agent-success/out/synthetic_*.json`):
+
+| Metric              | Baseline | Treatment |
+|---------------------|---------:|----------:|
+| n                   |       38 |        38 |
+| success_rate        |    0.000 |     0.947 |
+| median_retries      |    1.000 |     0.000 |
+| median_latency_ms   |    0.007 |     0.003 |
+| p95_latency_ms      |    0.012 |     0.012 |
+
+### What this measures and doesn't
+
+This isolates **the resolution-path contribution**. Two of the 38 records still miss because their confidence is below the 0.85 floor (`state` → `status`, `body` → `review_body` are semantic-only matches that Jaro-Winkler scores lower than the lexical near-misses). Lower the floor and treatment success climbs further, at the cost of false-positive risk on totally unrelated names.
+
+It does **not** measure: end-to-end LLM SQL accuracy, token-budget contributions, sentinel-flag contributions, cache-hit contributions. Those need the live-LLM harness in `baseline.py` / `treatment.py`.

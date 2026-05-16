@@ -33,6 +33,25 @@ print(result.matched, result.confidence)   # 'customer_id', 0.98
 prompt, tokens = cache.describe_for_agent(max_tokens=1500, hint="orders by region")
 ```
 
+## Benchmarks
+
+**Synthetic adversarial corpus** (`benches/agent-success/`): 38 column-name hallucinations modeled after real LLM SQL agent failures — case flips, missing/added underscores, plural/singular drift, semantic near-misses. Baseline treats the agent's candidate verbatim; treatment routes it through `resolve_column` at a 0.85 confidence floor.
+
+| Metric              | Baseline | Treatment | Δ |
+|---------------------|---------:|----------:|---:|
+| SQL success rate    |    0.0% |    94.7% | **+94.7 pp** |
+| Median retry count  |     1.0 |      0.0 | −1.0 |
+| Median latency      |   7 µs |    3 µs | — |
+
+Reproduce:
+
+```bash
+python benches/agent-success/synthetic_corpus.py
+python benches/agent-success/run_synthetic.py
+```
+
+This is a *micro-benchmark of the resolution path*, not an end-to-end LLM agent comparison. The `baseline.py` / `treatment.py` harnesses (BIRD / Spider on a real LLM) are scaffolded but require an API key + corpus download. See [`docs/benchmark.md`](docs/benchmark.md) for methodology.
+
 ## Why
 
 LLM SQL agents fail in the same three ways over and over:

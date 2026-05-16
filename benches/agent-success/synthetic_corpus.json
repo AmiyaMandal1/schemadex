@@ -1,0 +1,230 @@
+[
+  {
+    "question": "What is the Id on customers?",
+    "table": "customers",
+    "gold_column": "id",
+    "agent_candidate": "Id"
+  },
+  {
+    "question": "What is the ID on customers?",
+    "table": "customers",
+    "gold_column": "id",
+    "agent_candidate": "ID"
+  },
+  {
+    "question": "What is the emailadress on customers?",
+    "table": "customers",
+    "gold_column": "email",
+    "agent_candidate": "emailadress"
+  },
+  {
+    "question": "What is the firstname on customers?",
+    "table": "customers",
+    "gold_column": "first_name",
+    "agent_candidate": "firstname"
+  },
+  {
+    "question": "What is the lastname on customers?",
+    "table": "customers",
+    "gold_column": "last_name",
+    "agent_candidate": "lastname"
+  },
+  {
+    "question": "What is the regions on customers?",
+    "table": "customers",
+    "gold_column": "region",
+    "agent_candidate": "regions"
+  },
+  {
+    "question": "What is the createdAt on customers?",
+    "table": "customers",
+    "gold_column": "created_at",
+    "agent_candidate": "createdAt"
+  },
+  {
+    "question": "What is the Id on orders?",
+    "table": "orders",
+    "gold_column": "id",
+    "agent_candidate": "Id"
+  },
+  {
+    "question": "What is the ID on orders?",
+    "table": "orders",
+    "gold_column": "id",
+    "agent_candidate": "ID"
+  },
+  {
+    "question": "What is the customerid on orders?",
+    "table": "orders",
+    "gold_column": "customer_id",
+    "agent_candidate": "customerid"
+  },
+  {
+    "question": "What is the customer_idd on orders?",
+    "table": "orders",
+    "gold_column": "customer_id",
+    "agent_candidate": "customer_idd"
+  },
+  {
+    "question": "What is the totalcents on orders?",
+    "table": "orders",
+    "gold_column": "total_cents",
+    "agent_candidate": "totalcents"
+  },
+  {
+    "question": "What is the total on orders?",
+    "table": "orders",
+    "gold_column": "total_cents",
+    "agent_candidate": "total"
+  },
+  {
+    "question": "What is the currencies on orders?",
+    "table": "orders",
+    "gold_column": "currency",
+    "agent_candidate": "currencies"
+  },
+  {
+    "question": "What is the state on orders?",
+    "table": "orders",
+    "gold_column": "status",
+    "agent_candidate": "state"
+  },
+  {
+    "question": "What is the placedAt on orders?",
+    "table": "orders",
+    "gold_column": "placed_at",
+    "agent_candidate": "placedAt"
+  },
+  {
+    "question": "What is the Id on products?",
+    "table": "products",
+    "gold_column": "id",
+    "agent_candidate": "Id"
+  },
+  {
+    "question": "What is the ID on products?",
+    "table": "products",
+    "gold_column": "id",
+    "agent_candidate": "ID"
+  },
+  {
+    "question": "What is the sku_code on products?",
+    "table": "products",
+    "gold_column": "sku",
+    "agent_candidate": "sku_code"
+  },
+  {
+    "question": "What is the product_name on products?",
+    "table": "products",
+    "gold_column": "name",
+    "agent_candidate": "product_name"
+  },
+  {
+    "question": "What is the categories on products?",
+    "table": "products",
+    "gold_column": "category",
+    "agent_candidate": "categories"
+  },
+  {
+    "question": "What is the pricecents on products?",
+    "table": "products",
+    "gold_column": "price_cents",
+    "agent_candidate": "pricecents"
+  },
+  {
+    "question": "What is the instock on products?",
+    "table": "products",
+    "gold_column": "in_stock",
+    "agent_candidate": "instock"
+  },
+  {
+    "question": "What is the Id on shipments?",
+    "table": "shipments",
+    "gold_column": "id",
+    "agent_candidate": "Id"
+  },
+  {
+    "question": "What is the ID on shipments?",
+    "table": "shipments",
+    "gold_column": "id",
+    "agent_candidate": "ID"
+  },
+  {
+    "question": "What is the orderid on shipments?",
+    "table": "shipments",
+    "gold_column": "order_id",
+    "agent_candidate": "orderid"
+  },
+  {
+    "question": "What is the carrier_name on shipments?",
+    "table": "shipments",
+    "gold_column": "carrier",
+    "agent_candidate": "carrier_name"
+  },
+  {
+    "question": "What is the trackingnumber on shipments?",
+    "table": "shipments",
+    "gold_column": "tracking_number",
+    "agent_candidate": "trackingnumber"
+  },
+  {
+    "question": "What is the shippedAt on shipments?",
+    "table": "shipments",
+    "gold_column": "shipped_at",
+    "agent_candidate": "shippedAt"
+  },
+  {
+    "question": "What is the deliveredAt on shipments?",
+    "table": "shipments",
+    "gold_column": "delivered_at",
+    "agent_candidate": "deliveredAt"
+  },
+  {
+    "question": "What is the Id on reviews?",
+    "table": "reviews",
+    "gold_column": "id",
+    "agent_candidate": "Id"
+  },
+  {
+    "question": "What is the ID on reviews?",
+    "table": "reviews",
+    "gold_column": "id",
+    "agent_candidate": "ID"
+  },
+  {
+    "question": "What is the customerid on reviews?",
+    "table": "reviews",
+    "gold_column": "customer_id",
+    "agent_candidate": "customerid"
+  },
+  {
+    "question": "What is the customer_idd on reviews?",
+    "table": "reviews",
+    "gold_column": "customer_id",
+    "agent_candidate": "customer_idd"
+  },
+  {
+    "question": "What is the productid on reviews?",
+    "table": "reviews",
+    "gold_column": "product_id",
+    "agent_candidate": "productid"
+  },
+  {
+    "question": "What is the ratings on reviews?",
+    "table": "reviews",
+    "gold_column": "rating",
+    "agent_candidate": "ratings"
+  },
+  {
+    "question": "What is the review_body on reviews?",
+    "table": "reviews",
+    "gold_column": "body",
+    "agent_candidate": "review_body"
+  },
+  {
+    "question": "What is the submittedAt on reviews?",
+    "table": "reviews",
+    "gold_column": "submitted_at",
+    "agent_candidate": "submittedAt"
+  }
+]
