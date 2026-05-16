@@ -13,6 +13,7 @@ pub mod fingerprint;
 pub mod introspector;
 pub mod model;
 pub mod resolve;
+pub mod safety;
 pub mod sampling;
 
 pub mod backends;
@@ -25,6 +26,7 @@ pub use crate::model::{
     Column, ColumnSample, DataType, Database, ForeignKey, PrimaryKey, SampleStats, Table,
 };
 pub use crate::resolve::{resolve_column, ResolveResult};
+pub use crate::safety::assert_readonly;
 
 /// Render a markdown-style table from a [`QueryResult`] and trim it to fit
 /// `token_budget`. Returns the rendered string and the final token count.
@@ -151,6 +153,29 @@ impl SchemaCache {
         ),
     )]
     pub async fn run_sql<R: QueryRunner + ?Sized>(
+        &self,
+        runner: &R,
+        sql: &str,
+        token_budget: usize,
+    ) -> Result<(String, usize)> {
+        safety::assert_readonly(sql)?;
+        self.run_sql_unchecked(runner, sql, token_budget).await
+    }
+
+    /// Same as [`SchemaCache::run_sql`] but skips the read-only safety check.
+    /// Callers must validate the SQL themselves before calling this — it
+    /// will happily forward INSERT/UPDATE/DELETE/DROP statements to the
+    /// runner. Used by the Python `allow_write=True` escape hatch.
+    #[tracing::instrument(
+        level = "info",
+        name = "schema_cache.run_sql_unchecked",
+        skip(self, runner, sql),
+        fields(
+            sql_len = sql.len(),
+            token_budget,
+        ),
+    )]
+    pub async fn run_sql_unchecked<R: QueryRunner + ?Sized>(
         &self,
         runner: &R,
         sql: &str,

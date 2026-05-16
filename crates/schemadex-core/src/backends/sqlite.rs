@@ -4,12 +4,14 @@
 use crate::error::Result;
 use crate::introspector::{Backend, QueryResult, QueryRunner, SchemaIntrospector};
 use crate::model::{Column, DataType, ForeignKey, PrimaryKey};
+use crate::sampling::{categorical_sample, numeric_sample, SamplingPolicy};
 use async_trait::async_trait;
 use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 use sqlx::{Column as _, Row, TypeInfo, ValueRef};
 
 pub struct SqliteIntrospector {
     pool: SqlitePool,
+    pub sampling: Option<SamplingPolicy>,
 }
 
 impl SqliteIntrospector {
@@ -18,7 +20,113 @@ impl SqliteIntrospector {
             .max_connections(4)
             .connect(url)
             .await?;
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            sampling: None,
+        })
+    }
+
+    pub fn with_sampling(mut self, policy: SamplingPolicy) -> Self {
+        self.sampling = Some(policy);
+        self
+    }
+
+    async fn sample_column(
+        &self,
+        table: &str,
+        col: &Column,
+        policy: &SamplingPolicy,
+    ) -> Result<Option<crate::model::ColumnSample>> {
+        // Redaction check: skip sampling for likely-PII columns. We do this
+        // before any DB round-trip so a redacted column also costs nothing.
+        if policy
+            .redaction
+            .as_ref()
+            .map(|r| r.should_redact(&col.name, col.comment.as_deref()))
+            .unwrap_or(false)
+        {
+            tracing::debug!(column = %col.name, "sqlite.sample.redacted");
+            return Ok(None);
+        }
+        let t = table.replace('"', "");
+        let c = col.name.replace('"', "");
+        if col.data_type.is_numeric() {
+            let sql = format!(
+                "SELECT CAST(\"{c}\" AS REAL) AS v FROM \"{t}\" \
+                 WHERE \"{c}\" IS NOT NULL LIMIT {limit}",
+                c = c,
+                t = t,
+                limit = policy.sample_rows,
+            );
+            let rows = sqlx::query(&sql).fetch_all(&self.pool).await?;
+            let mut values: Vec<f64> = rows
+                .iter()
+                .map(|r| r.try_get::<f64, _>("v").unwrap_or(f64::NAN))
+                .filter(|v| !v.is_nan())
+                .collect();
+            let null_sql = format!(
+                "SELECT count(*) AS n FROM \"{t}\" WHERE \"{c}\" IS NULL",
+                t = t,
+                c = c,
+            );
+            let null_count: i64 = sqlx::query(&null_sql)
+                .fetch_one(&self.pool)
+                .await
+                .ok()
+                .and_then(|r| r.try_get::<i64, _>("n").ok())
+                .unwrap_or(0);
+            Ok(Some(numeric_sample(&mut values, null_count.max(0) as u64)))
+        } else if col.data_type.is_categorical() {
+            let sql = format!(
+                "SELECT \"{c}\" AS v, count(*) AS c FROM \"{t}\" \
+                 WHERE \"{c}\" IS NOT NULL \
+                 GROUP BY 1 ORDER BY count(*) DESC LIMIT {topk}",
+                c = c,
+                t = t,
+                topk = policy.top_k,
+            );
+            let rows = sqlx::query(&sql).fetch_all(&self.pool).await?;
+            let top: Vec<(String, u64)> = rows
+                .iter()
+                .filter_map(|r| {
+                    let v: Option<String> = r.try_get("v").ok();
+                    let c: Option<i64> = r.try_get("c").ok();
+                    Some((v?, c?.max(0) as u64))
+                })
+                .collect();
+            let total_non_null: u64 = top.iter().map(|(_, c)| *c).sum();
+            let null_sql = format!(
+                "SELECT count(*) AS n FROM \"{t}\" WHERE \"{c}\" IS NULL",
+                t = t,
+                c = c,
+            );
+            let null_count: i64 = sqlx::query(&null_sql)
+                .fetch_one(&self.pool)
+                .await
+                .ok()
+                .and_then(|r| r.try_get::<i64, _>("n").ok())
+                .unwrap_or(0);
+            let distinct_sql = format!(
+                "SELECT count(DISTINCT \"{c}\") AS n FROM \"{t}\"",
+                c = c,
+                t = t,
+            );
+            let distinct: Option<u64> = sqlx::query(&distinct_sql)
+                .fetch_one(&self.pool)
+                .await
+                .ok()
+                .and_then(|r| r.try_get::<i64, _>("n").ok())
+                .map(|n| n.max(0) as u64);
+            Ok(Some(categorical_sample(
+                &top,
+                total_non_null,
+                null_count.max(0) as u64,
+                distinct,
+                policy,
+            )))
+        } else {
+            Ok(None)
+        }
     }
 }
 
@@ -85,6 +193,17 @@ impl SchemaIntrospector for SqliteIntrospector {
                 ordinal: ordinal as i32,
                 sample: None,
             });
+        }
+
+        if let Some(policy) = self.sampling.as_ref() {
+            for col in cols.iter_mut() {
+                let sample = self
+                    .sample_column(table, col, policy)
+                    .await
+                    .ok()
+                    .flatten();
+                col.sample = sample;
+            }
         }
         Ok(cols)
     }

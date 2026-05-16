@@ -58,6 +58,7 @@ class SchemaCache:
         url: str,
         sql: str,
         token_budget: int = 1024,
+        allow_write: bool = False,
     ) -> tuple[str, int]: ...
 
 # Async free functions. Each returns a coroutine awaitable from an asyncio
@@ -95,4 +96,7 @@ async def run_sql_async(
     url: str,
     sql: str,
     token_budget: int = 1024,
+    allow_write: bool = False,
 ) -> tuple[str, int]: ...
+def clear_pool_cache() -> None: ...
+def pool_size() -> int: ...

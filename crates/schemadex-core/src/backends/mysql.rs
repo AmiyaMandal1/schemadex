@@ -5,12 +5,14 @@
 use crate::error::Result;
 use crate::introspector::{Backend, QueryResult, QueryRunner, SchemaIntrospector};
 use crate::model::{Column, DataType, ForeignKey, PrimaryKey};
+use crate::sampling::{categorical_sample, numeric_sample, SamplingPolicy};
 use async_trait::async_trait;
 use sqlx::mysql::{MySqlPool, MySqlPoolOptions};
 use sqlx::{Column as _, Row, TypeInfo, ValueRef};
 
 pub struct MysqlIntrospector {
     pool: MySqlPool,
+    pub sampling: Option<SamplingPolicy>,
 }
 
 impl MysqlIntrospector {
@@ -19,7 +21,147 @@ impl MysqlIntrospector {
             .max_connections(8)
             .connect(url)
             .await?;
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            sampling: None,
+        })
+    }
+
+    pub fn with_sampling(mut self, policy: SamplingPolicy) -> Self {
+        self.sampling = Some(policy);
+        self
+    }
+
+    async fn sample_column(
+        &self,
+        schema: Option<&str>,
+        table: &str,
+        col: &Column,
+        policy: &SamplingPolicy,
+    ) -> Result<Option<crate::model::ColumnSample>> {
+        // Redaction check: skip sampling for likely-PII columns. We do this
+        // before any DB round-trip so a redacted column also costs nothing.
+        if policy
+            .redaction
+            .as_ref()
+            .map(|r| r.should_redact(&col.name, col.comment.as_deref()))
+            .unwrap_or(false)
+        {
+            tracing::debug!(column = %col.name, "mysql.sample.redacted");
+            return Ok(None);
+        }
+        let t = table.replace('`', "");
+        let c = col.name.replace('`', "");
+        let qualified = match schema {
+            Some(s) => {
+                let s = s.replace('`', "");
+                format!("`{s}`.`{t}`")
+            }
+            None => format!("`{t}`"),
+        };
+        if col.data_type.is_numeric() {
+            let sql = format!(
+                "SELECT `{c}` AS v FROM {qualified} \
+                 WHERE `{c}` IS NOT NULL LIMIT {limit}",
+                c = c,
+                qualified = qualified,
+                limit = policy.sample_rows,
+            );
+            let rows = sqlx::query(&sql).fetch_all(&self.pool).await?;
+            // MySQL numeric columns can be SIGNED, UNSIGNED, or DECIMAL; try
+            // f64 first, then fall back through u64/i64 like the cell renderer.
+            let mut values: Vec<f64> = rows
+                .iter()
+                .map(|r| {
+                    r.try_get::<f64, _>("v")
+                        .ok()
+                        .or_else(|| r.try_get::<u64, _>("v").ok().map(|v| v as f64))
+                        .or_else(|| r.try_get::<i64, _>("v").ok().map(|v| v as f64))
+                        .unwrap_or(f64::NAN)
+                })
+                .filter(|v| !v.is_nan())
+                .collect();
+            let null_sql = format!(
+                "SELECT count(*) AS n FROM {qualified} WHERE `{c}` IS NULL",
+                qualified = qualified,
+                c = c,
+            );
+            let null_count: i64 = sqlx::query(&null_sql)
+                .fetch_one(&self.pool)
+                .await
+                .ok()
+                .and_then(|r| {
+                    r.try_get::<i64, _>("n")
+                        .ok()
+                        .or_else(|| r.try_get::<u64, _>("n").ok().map(|v| v as i64))
+                })
+                .unwrap_or(0);
+            Ok(Some(numeric_sample(&mut values, null_count.max(0) as u64)))
+        } else if col.data_type.is_categorical() {
+            let sql = format!(
+                "SELECT CAST(`{c}` AS CHAR) AS v, count(*) AS c \
+                 FROM {qualified} \
+                 WHERE `{c}` IS NOT NULL \
+                 GROUP BY 1 ORDER BY count(*) DESC LIMIT {topk}",
+                c = c,
+                qualified = qualified,
+                topk = policy.top_k,
+            );
+            let rows = sqlx::query(&sql).fetch_all(&self.pool).await?;
+            let top: Vec<(String, u64)> = rows
+                .iter()
+                .filter_map(|r| {
+                    let v: Option<String> = r.try_get("v").ok();
+                    let c: Option<u64> = r
+                        .try_get::<i64, _>("c")
+                        .ok()
+                        .map(|v| v.max(0) as u64)
+                        .or_else(|| r.try_get::<u64, _>("c").ok());
+                    Some((v?, c?))
+                })
+                .collect();
+            let total_non_null: u64 = top.iter().map(|(_, c)| *c).sum();
+            let null_sql = format!(
+                "SELECT count(*) AS n FROM {qualified} WHERE `{c}` IS NULL",
+                qualified = qualified,
+                c = c,
+            );
+            let null_count: u64 = sqlx::query(&null_sql)
+                .fetch_one(&self.pool)
+                .await
+                .ok()
+                .and_then(|r| {
+                    r.try_get::<i64, _>("n")
+                        .ok()
+                        .map(|v| v.max(0) as u64)
+                        .or_else(|| r.try_get::<u64, _>("n").ok())
+                })
+                .unwrap_or(0);
+            let distinct_sql = format!(
+                "SELECT count(DISTINCT `{c}`) AS n FROM {qualified}",
+                c = c,
+                qualified = qualified,
+            );
+            let distinct: Option<u64> = sqlx::query(&distinct_sql)
+                .fetch_one(&self.pool)
+                .await
+                .ok()
+                .and_then(|r| {
+                    r.try_get::<i64, _>("n")
+                        .ok()
+                        .map(|v| v.max(0) as u64)
+                        .or_else(|| r.try_get::<u64, _>("n").ok())
+                });
+            Ok(Some(categorical_sample(
+                &top,
+                total_non_null,
+                null_count,
+                distinct,
+                policy,
+            )))
+        } else {
+            Ok(None)
+        }
     }
 }
 
@@ -169,6 +311,17 @@ impl SchemaIntrospector for MysqlIntrospector {
                 ordinal: ordinal as i32,
                 sample: None,
             });
+        }
+
+        if let Some(policy) = self.sampling.as_ref() {
+            for col in cols.iter_mut() {
+                let sample = self
+                    .sample_column(schema, table, col, policy)
+                    .await
+                    .ok()
+                    .flatten();
+                col.sample = sample;
+            }
         }
         Ok(cols)
     }

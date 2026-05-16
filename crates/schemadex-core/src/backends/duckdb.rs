@@ -4,12 +4,14 @@
 use crate::error::{Result, SchemadexError};
 use crate::introspector::{Backend, SchemaIntrospector};
 use crate::model::{Column, DataType, ForeignKey, PrimaryKey};
+use crate::sampling::{categorical_sample, numeric_sample, SamplingPolicy};
 use async_trait::async_trait;
 use duckdb::{params, Connection};
 use std::sync::{Arc, Mutex};
 
 pub struct DuckDbIntrospector {
     conn: Arc<Mutex<Connection>>,
+    pub sampling: Option<SamplingPolicy>,
 }
 
 impl DuckDbIntrospector {
@@ -22,7 +24,140 @@ impl DuckDbIntrospector {
         };
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
+            sampling: None,
         })
+    }
+
+    pub fn with_sampling(mut self, policy: SamplingPolicy) -> Self {
+        self.sampling = Some(policy);
+        self
+    }
+
+    /// Sample one column. All DuckDB work runs inside a single
+    /// `spawn_blocking` so the synchronous `Connection` doesn't end up on the
+    /// async runtime thread. The closure returns the raw row data; the
+    /// histogram/percentile assembly happens out here.
+    async fn sample_column(
+        &self,
+        schema: &str,
+        table: &str,
+        col: &Column,
+        policy: &SamplingPolicy,
+    ) -> Result<Option<crate::model::ColumnSample>> {
+        // Redaction check: skip sampling for likely-PII columns. We do this
+        // before any DB round-trip so a redacted column also costs nothing.
+        if policy
+            .redaction
+            .as_ref()
+            .map(|r| r.should_redact(&col.name, col.comment.as_deref()))
+            .unwrap_or(false)
+        {
+            tracing::debug!(column = %col.name, "duckdb.sample.redacted");
+            return Ok(None);
+        }
+
+        let conn = self.conn.clone();
+        let schema = schema.replace('"', "");
+        let table = table.replace('"', "");
+        let cname = col.name.replace('"', "");
+        let qualified = format!("\"{schema}\".\"{table}\"");
+
+        if col.data_type.is_numeric() {
+            let limit = policy.sample_rows;
+            let cname_q = cname.clone();
+            let qualified_q = qualified.clone();
+            let (values, null_count) = tokio::task::spawn_blocking(move || -> Result<(Vec<f64>, u64)> {
+                let guard = conn
+                    .lock()
+                    .map_err(|_| SchemadexError::Other("duckdb lock poisoned".to_string()))?;
+                let sample_sql = format!(
+                    "SELECT CAST(\"{c}\" AS DOUBLE) AS v FROM {q} \
+                     WHERE \"{c}\" IS NOT NULL LIMIT {limit}",
+                    c = cname_q,
+                    q = qualified_q,
+                    limit = limit,
+                );
+                let mut stmt = guard.prepare(&sample_sql)?;
+                let values: Vec<f64> = stmt
+                    .query_map([], |r| r.get::<_, Option<f64>>(0))?
+                    .filter_map(|r| r.ok().flatten())
+                    .filter(|v| !v.is_nan())
+                    .collect();
+                let null_sql = format!(
+                    "SELECT count(*) AS n FROM {q} WHERE \"{c}\" IS NULL",
+                    q = qualified_q,
+                    c = cname_q,
+                );
+                let null_count: i64 = guard
+                    .query_row(&null_sql, [], |r| r.get::<_, i64>(0))
+                    .unwrap_or(0);
+                Ok((values, null_count.max(0) as u64))
+            })
+            .await
+            .map_err(|e| SchemadexError::Other(format!("duckdb join: {e}")))??;
+            let mut values = values;
+            Ok(Some(numeric_sample(&mut values, null_count)))
+        } else if col.data_type.is_categorical() {
+            let topk = policy.top_k;
+            let cname_q = cname.clone();
+            let qualified_q = qualified.clone();
+            let (top, null_count, distinct) = tokio::task::spawn_blocking(
+                move || -> Result<(Vec<(String, u64)>, u64, Option<u64>)> {
+                    let guard = conn
+                        .lock()
+                        .map_err(|_| SchemadexError::Other("duckdb lock poisoned".to_string()))?;
+                    let topk_sql = format!(
+                        "SELECT CAST(\"{c}\" AS VARCHAR) AS v, count(*) AS c FROM {q} \
+                         WHERE \"{c}\" IS NOT NULL \
+                         GROUP BY 1 ORDER BY count(*) DESC LIMIT {topk}",
+                        c = cname_q,
+                        q = qualified_q,
+                        topk = topk,
+                    );
+                    let mut stmt = guard.prepare(&topk_sql)?;
+                    let top: Vec<(String, u64)> = stmt
+                        .query_map([], |r| {
+                            Ok((
+                                r.get::<_, Option<String>>(0)?,
+                                r.get::<_, i64>(1)?,
+                            ))
+                        })?
+                        .filter_map(|r| r.ok())
+                        .filter_map(|(v, c)| v.map(|s| (s, c.max(0) as u64)))
+                        .collect();
+                    let null_sql = format!(
+                        "SELECT count(*) AS n FROM {q} WHERE \"{c}\" IS NULL",
+                        q = qualified_q,
+                        c = cname_q,
+                    );
+                    let null_count: i64 = guard
+                        .query_row(&null_sql, [], |r| r.get::<_, i64>(0))
+                        .unwrap_or(0);
+                    let distinct_sql = format!(
+                        "SELECT count(DISTINCT \"{c}\") AS n FROM {q}",
+                        c = cname_q,
+                        q = qualified_q,
+                    );
+                    let distinct: Option<u64> = guard
+                        .query_row(&distinct_sql, [], |r| r.get::<_, i64>(0))
+                        .ok()
+                        .map(|n| n.max(0) as u64);
+                    Ok((top, null_count.max(0) as u64, distinct))
+                },
+            )
+            .await
+            .map_err(|e| SchemadexError::Other(format!("duckdb join: {e}")))??;
+            let total_non_null: u64 = top.iter().map(|(_, c)| *c).sum();
+            Ok(Some(categorical_sample(
+                &top,
+                total_non_null,
+                null_count,
+                distinct,
+                policy,
+            )))
+        } else {
+            Ok(None)
+        }
     }
 }
 
@@ -92,7 +227,9 @@ impl SchemaIntrospector for DuckDbIntrospector {
             .map(str::to_string)
             .unwrap_or_else(|| "main".to_string());
         let table = table.to_string();
-        tokio::task::spawn_blocking(move || {
+        let schema_for_sample = schema.clone();
+        let table_for_sample = table.clone();
+        let mut cols: Vec<Column> = tokio::task::spawn_blocking(move || -> Result<Vec<Column>> {
             let guard = conn
                 .lock()
                 .map_err(|_| SchemadexError::Other("duckdb lock poisoned".to_string()))?;
@@ -128,7 +265,19 @@ impl SchemaIntrospector for DuckDbIntrospector {
                 .collect())
         })
         .await
-        .map_err(|e| SchemadexError::Other(format!("duckdb join: {e}")))?
+        .map_err(|e| SchemadexError::Other(format!("duckdb join: {e}")))??;
+
+        if let Some(policy) = self.sampling.as_ref() {
+            for col in cols.iter_mut() {
+                let sample = self
+                    .sample_column(&schema_for_sample, &table_for_sample, col, policy)
+                    .await
+                    .ok()
+                    .flatten();
+                col.sample = sample;
+            }
+        }
+        Ok(cols)
     }
 
     #[tracing::instrument(level = "debug", name = "duckdb.primary_key", skip(self))]

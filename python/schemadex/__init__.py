@@ -146,6 +146,14 @@ async def run_sql_async(
     url: str,
     sql: str,
     token_budget: int = 1024,
+    allow_write: bool = False,
 ) -> tuple[str, int]:
-    """Async variant of :meth:`SchemaCache.run_sql`. Returns ``(rendered, token_count)``."""
-    return await _native.run_sql_async(cache, url, sql, token_budget)
+    """Async variant of :meth:`SchemaCache.run_sql`. Returns ``(rendered, token_count)``.
+
+    ``allow_write=True`` skips the read-only SQL guard. Only do this if you
+    have already validated the SQL yourself — write statements (INSERT,
+    UPDATE, DELETE, DROP, ...) will reach the database.
+    """
+    return await _native.run_sql_async(
+        cache, url, sql, token_budget, allow_write=allow_write
+    )

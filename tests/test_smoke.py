@@ -98,17 +98,12 @@ def test_refresh_runs_without_error(tmp_path: Path) -> None:
 
 
 def test_sample_values_flag_runs(tmp_path: Path) -> None:
-    """Passing ``sample_values=True`` must not raise and the resulting cache
-    must still parse the schema correctly.
-
-    The seed data deliberately gives ``delay_code`` an 80% concentration of
-    ``'No Delay'`` (4 of 5 rows) — matching the Nokia sentinel story. Once
-    sqlite gains sample-value support we'll extend this test to assert that
-    the sentinel actually fires. For now the sqlite backend silently ignores
-    the sampling policy, so we only check the wiring doesn't blow up.
+    """SQLite sampling must populate ``delay_code.sample`` and fire the
+    sentinel at the 80% ``'No Delay'`` concentration (4 of 5 rows) — matching
+    the Nokia sentinel story.
     """
     db = tmp_path / "demo.sqlite"
-    seed(db)
+    seed(db)  # 4/5 rows are 'No Delay' on delay_code
     cache = schemadex.SchemaCache.from_url(
         f"sqlite://{db}",
         cache_dir=str(tmp_path / "cache"),
@@ -117,8 +112,11 @@ def test_sample_values_flag_runs(tmp_path: Path) -> None:
         sample_sentinel_threshold=0.4,
         sample_rows=1000,
     )
-    assert "users" in cache.list_tables()
     table = cache.get_table("users")
-    assert table is not None
-    column_names = {c["name"] for c in table["columns"]}
-    assert {"id", "email", "delay_code"}.issubset(column_names)
+    delay = next(c for c in table["columns"] if c["name"] == "delay_code")
+    sample = delay.get("sample")
+    assert sample is not None, "sqlite sampling should populate sample"
+    sentinel = sample.get("sentinel")
+    assert sentinel is not None, "sentinel should fire at 80% No Delay"
+    assert sentinel[0] == "No Delay"
+    assert sentinel[1] > 0.7

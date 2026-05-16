@@ -83,15 +83,15 @@ LLM SQL agents fail in the same three ways over and over:
 
 ## Backends
 
-| Backend  | Feature flag       | Status |
-|----------|--------------------|--------|
-| Postgres | `postgres`         | ✅     |
-| SQLite   | `sqlite`           | ✅     |
-| DuckDB   | `duckdb_backend`   | ✅     |
-| MySQL    | `mysql`            | ✅     |
-| BigQuery | `bigquery`         | 🛠 scaffold |
-| Snowflake | `snowflake`       | 🛠 scaffold |
-| MSSQL    | `mssql`            | 🛠 scaffold |
+| Backend  | Feature flag       | Status | Credentials |
+|----------|--------------------|--------|-------------|
+| Postgres | `postgres`         | ✅     | URL only |
+| SQLite   | `sqlite`           | ✅     | URL only |
+| DuckDB   | `duckdb_backend`   | ✅     | URL only |
+| MySQL    | `mysql`            | ✅     | URL only |
+| BigQuery | `bigquery`         | ✅     | `GOOGLE_APPLICATION_CREDENTIALS` or ADC (`gcloud auth application-default login`) |
+| Snowflake | `snowflake`       | ✅     | `SNOWFLAKE_USER`, `SNOWFLAKE_ACCOUNT`, `SNOWFLAKE_PRIVATE_KEY_PATH` (key-pair JWT); optional `SNOWFLAKE_WAREHOUSE`, `SNOWFLAKE_ROLE` |
+| MSSQL    | `mssql`            | ✅     | URL (`mssql://user:pass@host:port/database`; append `?encrypt=true` for TLS) |
 
 ## MCP server
 

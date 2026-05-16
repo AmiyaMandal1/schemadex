@@ -320,25 +320,48 @@ impl PySchemaCache {
         Ok((report.changed, report.unchanged))
     }
 
-    /// Execute a SELECT through a fresh connection to `url` and return a
+    /// Execute a SELECT through a pooled connection to `url` and return a
     /// markdown-rendered result table that fits inside ``token_budget``.
     ///
     /// Returns ``(rendered_table, token_count)``. Rows are dropped from the
     /// bottom until the rendered table fits; if anything was dropped, a
     /// ``_(truncated to N rows)_`` marker is appended.
     ///
+    /// By default the SQL is validated by :func:`schemadex.assert_readonly`
+    /// (only ``SELECT`` / ``WITH`` / ``EXPLAIN`` / ``SHOW`` / ``DESCRIBE`` /
+    /// ``DESC`` are accepted). Pass ``allow_write=True`` to bypass the
+    /// guard — only do this if you have already validated the SQL yourself.
+    /// Bypassing the guard lets ``DELETE`` / ``DROP`` / ``UPDATE`` reach the
+    /// database. **This is dangerous.**
+    ///
+    /// The underlying connection is cached process-wide and reused across
+    /// calls, so the first invocation pays the connect cost and later ones
+    /// don't.
+    ///
     /// DuckDB URLs are not supported yet — the QueryRunner trait isn't wired
     /// up for the synchronous duckdb backend.
-    #[pyo3(signature = (url, sql, token_budget=1024))]
-    fn run_sql(&self, url: &str, sql: &str, token_budget: usize) -> PyResult<(String, usize)> {
+    #[pyo3(signature = (url, sql, token_budget=1024, allow_write=false))]
+    fn run_sql(
+        &self,
+        url: &str,
+        sql: &str,
+        token_budget: usize,
+        allow_write: bool,
+    ) -> PyResult<(String, usize)> {
         let url = url.to_string();
         let sql = sql.to_string();
         let inner = Arc::clone(&self.inner);
         rt()
             .block_on(async move {
-                let runner = backends::connect_runner(&url).await?;
+                let runner = backends::shared_runner(&url).await?;
                 let guard = inner.lock().expect("poisoned");
-                guard.run_sql(&*runner, &sql, token_budget).await
+                if allow_write {
+                    guard
+                        .run_sql_unchecked(&*runner, &sql, token_budget)
+                        .await
+                } else {
+                    guard.run_sql(&*runner, &sql, token_budget).await
+                }
             })
             .map_err(map_err)
     }
@@ -537,13 +560,14 @@ fn refresh_table_async<'py>(
 }
 
 #[pyfunction]
-#[pyo3(signature = (cache, url, sql, token_budget=1024))]
+#[pyo3(signature = (cache, url, sql, token_budget=1024, allow_write=false))]
 fn run_sql_async<'py>(
     py: Python<'py>,
     cache: &PySchemaCache,
     url: String,
     sql: String,
     token_budget: usize,
+    allow_write: bool,
 ) -> PyResult<Bound<'py, PyAny>> {
     ensure_runtime();
     let inner = Arc::clone(&cache.inner);
@@ -551,9 +575,15 @@ fn run_sql_async<'py>(
         let result = tokio::task::spawn_blocking(move || {
             let handle = tokio::runtime::Handle::current();
             handle.block_on(async move {
-                let runner = backends::connect_runner(&url).await?;
+                let runner = backends::shared_runner(&url).await?;
                 let guard = inner.lock().expect("poisoned");
-                guard.run_sql(&*runner, &sql, token_budget).await
+                if allow_write {
+                    guard
+                        .run_sql_unchecked(&*runner, &sql, token_budget)
+                        .await
+                } else {
+                    guard.run_sql(&*runner, &sql, token_budget).await
+                }
             })
         })
         .await
@@ -561,6 +591,18 @@ fn run_sql_async<'py>(
         .map_err(map_err)?;
         Ok(result)
     })
+}
+
+/// Drop every cached connection in the process-wide pool. Test helper.
+#[pyfunction]
+fn clear_pool_cache() {
+    backends::clear_pool_cache();
+}
+
+/// Return the current size of the process-wide connection pool. Test helper.
+#[pyfunction]
+fn pool_size() -> usize {
+    backends::pool_size()
 }
 
 #[pymodule]
@@ -574,6 +616,8 @@ fn _native(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(refresh_async, m)?)?;
     m.add_function(wrap_pyfunction!(refresh_table_async, m)?)?;
     m.add_function(wrap_pyfunction!(run_sql_async, m)?)?;
+    m.add_function(wrap_pyfunction!(clear_pool_cache, m)?)?;
+    m.add_function(wrap_pyfunction!(pool_size, m)?)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }
