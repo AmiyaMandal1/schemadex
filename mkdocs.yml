@@ -14,6 +14,7 @@ theme:
       primary: indigo
 nav:
   - Home: index.md
+  - Usage: usage.md
   - Architecture: architecture.md
   - Benchmark: benchmark.md
   - Release: release.md
