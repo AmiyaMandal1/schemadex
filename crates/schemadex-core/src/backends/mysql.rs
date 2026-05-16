@@ -82,6 +82,7 @@ impl SchemaIntrospector for MysqlIntrospector {
         Backend::Mysql
     }
 
+    #[tracing::instrument(level = "debug", name = "mysql.tables", skip(self))]
     async fn tables(&self) -> Result<Vec<(Option<String>, String)>> {
         let rows = sqlx::query(
             "SELECT table_schema, table_name FROM information_schema.tables \
@@ -100,6 +101,7 @@ impl SchemaIntrospector for MysqlIntrospector {
             .collect())
     }
 
+    #[tracing::instrument(level = "debug", name = "mysql.columns", skip(self))]
     async fn columns(&self, schema: Option<&str>, table: &str) -> Result<Vec<Column>> {
         // information_schema.columns: filter by the requested schema if given,
         // otherwise by DATABASE() (the connection's default).
@@ -171,6 +173,7 @@ impl SchemaIntrospector for MysqlIntrospector {
         Ok(cols)
     }
 
+    #[tracing::instrument(level = "debug", name = "mysql.primary_key", skip(self))]
     async fn primary_key(&self, schema: Option<&str>, table: &str) -> Result<Option<PrimaryKey>> {
         let rows = match schema {
             Some(s) => sqlx::query(
@@ -222,6 +225,7 @@ impl SchemaIntrospector for MysqlIntrospector {
         Ok(Some(PrimaryKey { name, columns }))
     }
 
+    #[tracing::instrument(level = "debug", name = "mysql.foreign_keys", skip(self))]
     async fn foreign_keys(&self, schema: Option<&str>, table: &str) -> Result<Vec<ForeignKey>> {
         let rows = match schema {
             Some(s) => sqlx::query(
@@ -385,6 +389,12 @@ fn mysql_cell_to_string(row: &sqlx::mysql::MySqlRow, idx: usize) -> String {
 
 #[async_trait]
 impl QueryRunner for MysqlIntrospector {
+    #[tracing::instrument(
+        level = "debug",
+        name = "mysql.run_sql",
+        skip(self, sql),
+        fields(sql_len = sql.len(), row_limit),
+    )]
     async fn run_sql(&self, sql: &str, row_limit: usize) -> Result<QueryResult> {
         let rows = sqlx::query(sql).fetch_all(&self.pool).await?;
         let truncated = rows.len() > row_limit;

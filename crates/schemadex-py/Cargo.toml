@@ -16,7 +16,15 @@ name = "_native"
 crate-type = ["cdylib"]
 
 [features]
+# `default` keeps backwards compatibility: `pip install schemadex` (and a plain
+# `maturin build`) still produce an all-backends wheel.
 default = ["postgres", "sqlite", "mysql", "duckdb_backend", "bigquery", "snowflake", "mssql"]
+# `slim` is an empty feature set — power users opt into individual backends via
+# `maturin build --no-default-features --features schemadex-py/<backend>`.
+slim = []
+# `full` enumerates every backend explicitly so it's easy to add new ones in
+# one place. Equivalent to `default` today.
+full = ["postgres", "sqlite", "mysql", "duckdb_backend", "bigquery", "snowflake", "mssql"]
 postgres = ["schemadex-core/postgres"]
 sqlite = ["schemadex-core/sqlite"]
 mysql = ["schemadex-core/mysql"]

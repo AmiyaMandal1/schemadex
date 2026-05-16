@@ -51,6 +51,7 @@ impl SchemaIntrospector for SqliteIntrospector {
         Backend::Sqlite
     }
 
+    #[tracing::instrument(level = "debug", name = "sqlite.tables", skip(self))]
     async fn tables(&self) -> Result<Vec<(Option<String>, String)>> {
         let rows = sqlx::query(
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
@@ -63,6 +64,7 @@ impl SchemaIntrospector for SqliteIntrospector {
             .collect())
     }
 
+    #[tracing::instrument(level = "debug", name = "sqlite.columns", skip(self))]
     async fn columns(&self, _schema: Option<&str>, table: &str) -> Result<Vec<Column>> {
         let sql = format!("PRAGMA table_info(\"{}\")", table.replace('"', ""));
         let rows = sqlx::query(&sql).fetch_all(&self.pool).await?;
@@ -87,6 +89,7 @@ impl SchemaIntrospector for SqliteIntrospector {
         Ok(cols)
     }
 
+    #[tracing::instrument(level = "debug", name = "sqlite.primary_key", skip(self))]
     async fn primary_key(&self, _schema: Option<&str>, table: &str) -> Result<Option<PrimaryKey>> {
         let sql = format!("PRAGMA table_info(\"{}\")", table.replace('"', ""));
         let rows = sqlx::query(&sql).fetch_all(&self.pool).await?;
@@ -111,6 +114,7 @@ impl SchemaIntrospector for SqliteIntrospector {
         }))
     }
 
+    #[tracing::instrument(level = "debug", name = "sqlite.foreign_keys", skip(self))]
     async fn foreign_keys(&self, _schema: Option<&str>, table: &str) -> Result<Vec<ForeignKey>> {
         let sql = format!("PRAGMA foreign_key_list(\"{}\")", table.replace('"', ""));
         let rows = sqlx::query(&sql).fetch_all(&self.pool).await?;
@@ -171,6 +175,12 @@ fn sqlite_cell_to_string(row: &sqlx::sqlite::SqliteRow, idx: usize) -> String {
 
 #[async_trait]
 impl QueryRunner for SqliteIntrospector {
+    #[tracing::instrument(
+        level = "debug",
+        name = "sqlite.run_sql",
+        skip(self, sql),
+        fields(sql_len = sql.len(), row_limit),
+    )]
     async fn run_sql(&self, sql: &str, row_limit: usize) -> Result<QueryResult> {
         // Fetch one extra row so we can flag truncation without a second
         // round-trip. We don't try to wrap the user's SQL in a subquery —

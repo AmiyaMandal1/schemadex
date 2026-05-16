@@ -36,6 +36,9 @@ Issues = "https://github.com/AmiyaMandal1/schemadex/issues"
 langchain = ["langchain-core>=0.2"]
 langgraph = ["langgraph>=0.2"]
 mcp = ["mcp>=1.2"]
+# Cosmetic placeholder: the default PyPI wheel already bundles every backend.
+# See docs/slim-wheels.md for how to build a slim wheel from source.
+full = []
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",

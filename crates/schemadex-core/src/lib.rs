@@ -141,6 +141,15 @@ impl SchemaCache {
     /// markdown-rendered result that fits inside `token_budget`. The internal
     /// row limit is a fixed heuristic (200) — `render_table_for_agent` then
     /// trims further if the response still doesn't fit.
+    #[tracing::instrument(
+        level = "info",
+        name = "schema_cache.run_sql",
+        skip(self, runner, sql),
+        fields(
+            sql_len = sql.len(),
+            token_budget,
+        ),
+    )]
     pub async fn run_sql<R: QueryRunner + ?Sized>(
         &self,
         runner: &R,
@@ -148,6 +157,12 @@ impl SchemaCache {
         token_budget: usize,
     ) -> Result<(String, usize)> {
         let result = runner.run_sql(sql, 200).await?;
+        tracing::debug!(
+            rows = result.rows.len(),
+            cols = result.columns.len(),
+            truncated = result.truncated,
+            "schema_cache.run_sql.fetched"
+        );
         render_table_for_agent(&result, token_budget)
     }
 }

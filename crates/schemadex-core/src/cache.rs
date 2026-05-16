@@ -63,27 +63,52 @@ impl SchemaCache {
 
     /// Build a fresh cache by introspecting via the given backend, then
     /// persist it to disk. If a fresh on-disk cache exists, reuse it.
+    #[tracing::instrument(
+        level = "info",
+        name = "schema_cache.from_introspector",
+        skip(introspector, opts),
+        fields(
+            backend = introspector.backend().as_str(),
+            url_hash = tracing::field::Empty,
+            ttl_secs = opts.ttl.as_secs(),
+            parallel = opts.parallel,
+        ),
+    )]
     pub async fn from_introspector<I: SchemaIntrospector + ?Sized>(
         introspector: &I,
         url: &str,
         opts: &CacheOptions,
     ) -> Result<Self> {
         let url_hash = hash_database_url(url);
+        tracing::Span::current().record("url_hash", url_hash.as_str());
         let cache_dir = resolve_cache_dir(opts, &url_hash)?;
         tokio::fs::create_dir_all(&cache_dir).await?;
         let cache_path = cache_dir.join("database.json");
 
         if let Some(existing) = read_envelope(&cache_path).await? {
             if !is_stale(&existing, opts.ttl) {
+                tracing::info!(
+                    cache_path = %cache_path.display(),
+                    table_count = existing.database.tables.len(),
+                    "schema_cache.hit"
+                );
                 return Ok(Self {
                     database: existing.database,
                     cache_path,
                 });
             }
+            tracing::info!(cache_path = %cache_path.display(), "schema_cache.stale");
+        } else {
+            tracing::info!(cache_path = %cache_path.display(), "schema_cache.miss");
         }
 
         let database = introspect_all(introspector, &url_hash, opts.parallel).await?;
         write_envelope(&cache_path, &database).await?;
+        tracing::info!(
+            cache_path = %cache_path.display(),
+            table_count = database.tables.len(),
+            "schema_cache.populated"
+        );
         Ok(Self {
             database,
             cache_path,
@@ -92,6 +117,17 @@ impl SchemaCache {
 
     /// Force a refresh: re-introspect every table, but only rewrite the cache
     /// entries whose DDL hash actually changed.
+    #[tracing::instrument(
+        level = "info",
+        name = "schema_cache.refresh",
+        skip(self, introspector),
+        fields(
+            backend = introspector.backend().as_str(),
+            url_hash = %self.database.url_hash,
+            parallel,
+            tables_before = self.database.tables.len(),
+        ),
+    )]
     pub async fn refresh<I: SchemaIntrospector + ?Sized>(
         &mut self,
         introspector: &I,
@@ -116,6 +152,11 @@ impl SchemaCache {
 
         self.database = fresh;
         write_envelope(&self.cache_path, &self.database).await?;
+        tracing::info!(
+            changed = changed.len(),
+            unchanged = unchanged.len(),
+            "schema_cache.refresh.done"
+        );
         Ok(RefreshReport { changed, unchanged })
     }
 
@@ -127,6 +168,16 @@ impl SchemaCache {
     /// `changed` or `unchanged` based on its DDL hash. Errors with
     /// [`SchemadexError::TableNotFound`] if the name doesn't match any
     /// currently cached table.
+    #[tracing::instrument(
+        level = "info",
+        name = "schema_cache.refresh_table",
+        skip(self, introspector),
+        fields(
+            backend = introspector.backend().as_str(),
+            url_hash = %self.database.url_hash,
+            table = qualified_or_bare_name,
+        ),
+    )]
     pub async fn refresh_table<I: SchemaIntrospector + ?Sized>(
         &mut self,
         introspector: &I,

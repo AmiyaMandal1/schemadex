@@ -1,0 +1,28 @@
+site_name: schemadex
+site_description: Schema introspection and resolution toolkit for SQL agents
+site_url: https://amiyamandal1.github.io/schemadex/
+repo_url: https://github.com/AmiyaMandal1/schemadex
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.expand
+    - content.code.copy
+    - content.code.annotate
+  palette:
+    - scheme: default
+      primary: indigo
+nav:
+  - Home: index.md
+  - Architecture: architecture.md
+  - Benchmark: benchmark.md
+  - Release: release.md
+  - Slim wheels: slim-wheels.md
+markdown_extensions:
+  - admonition
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - tables
+  - toc:
+      permalink: true

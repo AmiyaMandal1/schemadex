@@ -11,16 +11,6 @@ pip install schemadex                            # core + all backends
 pip install "schemadex[langchain,langgraph]"     # with framework adapters
 ```
 
-Rust (git, not crates.io):
-
-```toml
-schemadex-core = { git = "https://github.com/AmiyaMandal1/schemadex", features = ["postgres", "sqlite", "duckdb_backend"] }
-```
-
-## Documentation
-
-Full docs: <https://amiyamandal1.github.io/schemadex/>
-
 ## 10-line example
 
 ```python
@@ -39,7 +29,7 @@ prompt, tokens = cache.describe_for_agent(max_tokens=1500, hint="orders by regio
 
 ## Benchmarks
 
-**Synthetic adversarial corpus** (`benches/agent-success/`): 38 column-name hallucinations modeled after real LLM SQL agent failures — case flips, missing/added underscores, plural/singular drift, semantic near-misses.
+**Synthetic adversarial corpus**: 38 column-name hallucinations modeled after real LLM SQL agent failures — case flips, missing/added underscores, plural/singular drift, semantic near-misses.
 
 Two harnesses, same corpus:
 
@@ -52,20 +42,7 @@ Same model in both halves of the LLM row — the difference is `describe_for_age
 
 Median per-record latency: literal harness ~7 µs / 3 µs (schemadex overhead is in the noise); LLM harness ~285 ms (LLM-bound on an M2 Max).
 
-Reproduce:
-
-```bash
-# Literal (no LLM)
-python benches/agent-success/synthetic_corpus.py
-python benches/agent-success/run_synthetic.py
-
-# Real LLM via Ollama
-ollama serve &
-ollama pull qwen2.5-coder:3b
-python benches/agent-success/run_ollama.py --model qwen2.5-coder:3b --n 0
-```
-
-This is a *micro-benchmark of the resolution path*, not an end-to-end LLM agent comparison on BIRD/Spider — those harnesses are scaffolded in `baseline.py` / `treatment.py` but require an API key + corpus download. See [`docs/benchmark.md`](docs/benchmark.md) for methodology.
+This is a *micro-benchmark of the resolution path*, not an end-to-end LLM agent comparison on BIRD/Spider. See [Benchmark](benchmark.md) for methodology.
 
 ## Why
 
@@ -79,19 +56,19 @@ LLM SQL agents fail in the same three ways over and over:
 
 - **Resolution**: `resolve_column(table, candidate)` returns a confidence + alternatives instead of letting the agent guess.
 - **Sampling**: `sample_values=True` collects top-K, percentiles, and flags any value over 40% frequency as a sentinel.
-- **Cache**: introspect once, persist to `~/.cache/schemadex/<db>/`, refresh on DDL change. On a local 50-table SQLite, warm reads are ~47× cold (`cargo bench --bench cache_refresh`); on remote Postgres the ratio grows since cold is network-bound.
+- **Cache**: introspect once, persist to `~/.cache/schemadex/<db>/`, refresh on DDL change. On a local 50-table SQLite, warm reads are ~47× cold; on remote Postgres the ratio grows since cold is network-bound.
 
 ## Backends
 
 | Backend  | Feature flag       | Status |
 |----------|--------------------|--------|
-| Postgres | `postgres`         | ✅     |
-| SQLite   | `sqlite`           | ✅     |
-| DuckDB   | `duckdb_backend`   | ✅     |
-| MySQL    | `mysql`            | ✅     |
-| BigQuery | `bigquery`         | 🛠 scaffold |
-| Snowflake | `snowflake`       | 🛠 scaffold |
-| MSSQL    | `mssql`            | 🛠 scaffold |
+| Postgres | `postgres`         | Stable |
+| SQLite   | `sqlite`           | Stable |
+| DuckDB   | `duckdb_backend`   | Stable |
+| MySQL    | `mysql`            | Stable |
+| BigQuery | `bigquery`         | Scaffold |
+| Snowflake | `snowflake`       | Scaffold |
+| MSSQL    | `mssql`            | Scaffold |
 
 ## MCP server
 
@@ -110,22 +87,9 @@ LLM SQL agents fail in the same three ways over and over:
 
 The agent then has `list_tables`, `describe_for_agent`, `resolve_column`, and `run_sql` tools without any extra wiring.
 
-## Layout
-
-```
-schemadex/
-├── crates/
-│   ├── schemadex-core/    pure-Rust introspection + cache + resolve
-│   └── schemadex-py/      PyO3 bindings (built as `schemadex._native`)
-├── python/schemadex/      pure-Python public surface
-├── examples/              langchain, langgraph, quickstart
-├── benches/agent-success/ benchmark harness (see docs/benchmark.md)
-└── docs/                  architecture + benchmark methodology
-```
-
 ## Project status
 
-Pre-1.0. API is still in motion. See [`road_map.md`](./road_map.md) for milestone tracking.
+Pre-1.0. API is still in motion.
 
 ## License
 

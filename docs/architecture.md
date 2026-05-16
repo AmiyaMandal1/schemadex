@@ -68,3 +68,37 @@ few percent.
 | Postgres | yes      | `information_schema` + `pg_catalog` | full top-K + percentiles |
 | SQLite   | no       | `PRAGMA table_info`, `PRAGMA foreign_key_list` | not yet wired |
 | DuckDB   | yes (`main`) | omitted (varies by version) | not yet wired |
+
+## Observability
+
+`schemadex-core` emits structured `tracing` spans on every externally-visible
+entry point — `SchemaCache::{from_introspector, refresh, refresh_table,
+run_sql}` at `info`, plus the per-backend trait methods (`tables`, `columns`,
+`primary_key`, `foreign_keys`, `run_sql`) at `debug`. Spans carry the backend
+name, URL hash (credential-stripped), table identity, and result sizes so a
+log scan tells you what the cache did without reading rows.
+
+Wire up a subscriber once at process start (any `tracing_subscriber`
+configuration works) and drive the filter via `RUST_LOG`:
+
+```bash
+# normal operation: high-signal cache events plus warnings from sqlx
+RUST_LOG=schemadex=info,sqlx=warn cargo run
+
+# debug a slow refresh: include per-table backend calls
+RUST_LOG=schemadex=debug cargo run
+```
+
+Filtering to a single backend uses the span target prefix
+`schemadex_core::backends::<backend>`:
+
+```bash
+# only postgres backend spans
+RUST_LOG=schemadex_core::backends::postgres=debug,schemadex=info cargo run
+
+# only the cache, no backend chatter
+RUST_LOG=schemadex_core::cache=info cargo run
+```
+
+Row streams from `run_sql` are deliberately `skip`-ped from the span fields
+to keep query results out of logs.

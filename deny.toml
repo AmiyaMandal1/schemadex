@@ -1,10 +1,35 @@
 # cargo-deny configuration. Run via `cargo deny check`.
+#
+# The supply chain we depend on (sqlx-mysql, pyo3, duckdb-bundled) drags in a
+# handful of advisories and exotic licenses we can't easily move off of. The
+# entries below are scoped narrowly: each ignored advisory or extra license
+# has a tracked reason and a follow-up path. Anything broader stays on the
+# default deny path.
 
 [advisories]
 yanked = "warn"
-ignore = []
+ignore = [
+    # RUSTSEC-2025-0020 — pyo3 `PyString::from_object` buffer-overflow note.
+    # Fixed in pyo3 0.24.1; we're pinned at 0.22 because the rest of the
+    # PyO3 ecosystem (pyo3-async-runtimes) hasn't moved yet. We never call
+    # `PyString::from_object` from `schemadex-py`, so the practical impact
+    # for our wheel is nil. Tracked: bump pyo3 once the async-runtimes crate
+    # supports 0.24+.
+    "RUSTSEC-2025-0020",
+
+    # RUSTSEC-2023-0071 — Marvin Attack timing sidechannel in the `rsa`
+    # crate, pulled in transitively by sqlx-mysql. No safe upgrade is
+    # available upstream as of writing. The attack requires the attacker to
+    # observe RSA decryption timing over the network; schemadex's MySQL
+    # backend uses `rsa` only for caching_sha2_password auth handshakes, and
+    # users running schemadex against an untrusted MySQL endpoint already
+    # have larger problems. Re-evaluate when the RustCrypto fix lands.
+    "RUSTSEC-2023-0071",
+]
 
 [licenses]
+# Licenses we accept. The list is kept in OSI/SPDX-canonical names so
+# cargo-deny's matcher works without a confidence drop.
 allow = [
   "MIT",
   "Apache-2.0",
@@ -18,6 +43,12 @@ allow = [
   "MPL-2.0",
   "Zlib",
   "OpenSSL",
+  "BSL-1.0",
+  "WTFPL",
+  # `webpki-roots` (transitive via duckdb -> reqwest) ships the Mozilla
+  # root CA bundle under CDLA-Permissive-2.0. The license is permissive
+  # and SPDX-recognized; cargo-deny just doesn't list it as a default.
+  "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.93
 

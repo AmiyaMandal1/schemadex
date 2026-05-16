@@ -41,6 +41,17 @@ impl PostgresIntrospector {
         col: &Column,
         policy: &SamplingPolicy,
     ) -> Result<Option<crate::model::ColumnSample>> {
+        // Redaction check: skip sampling for likely-PII columns. We do this
+        // before any DB round-trip so a redacted column also costs nothing.
+        if policy
+            .redaction
+            .as_ref()
+            .map(|r| r.should_redact(&col.name, col.comment.as_deref()))
+            .unwrap_or(false)
+        {
+            tracing::debug!(column = %col.name, "postgres.sample.redacted");
+            return Ok(None);
+        }
         if col.data_type.is_numeric() {
             let sql = format!(
                 "SELECT \"{col}\"::double precision AS v FROM \"{schema}\".\"{table}\" \
@@ -165,6 +176,7 @@ impl SchemaIntrospector for PostgresIntrospector {
         Backend::Postgres
     }
 
+    #[tracing::instrument(level = "debug", name = "postgres.tables", skip(self))]
     async fn tables(&self) -> Result<Vec<(Option<String>, String)>> {
         let rows = sqlx::query(
             "SELECT table_schema, table_name FROM information_schema.tables \
@@ -184,6 +196,7 @@ impl SchemaIntrospector for PostgresIntrospector {
             .collect())
     }
 
+    #[tracing::instrument(level = "debug", name = "postgres.columns", skip(self))]
     async fn columns(&self, schema: Option<&str>, table: &str) -> Result<Vec<Column>> {
         let schema = self.schema_or_default(schema).to_string();
         let rows = sqlx::query(
@@ -216,10 +229,10 @@ impl SchemaIntrospector for PostgresIntrospector {
             });
         }
 
-        if let Some(policy) = self.sampling {
+        if let Some(policy) = self.sampling.as_ref() {
             for col in cols.iter_mut() {
                 let sample = self
-                    .sample_column(&schema, table, col, &policy)
+                    .sample_column(&schema, table, col, policy)
                     .await
                     .ok()
                     .flatten();
@@ -229,6 +242,7 @@ impl SchemaIntrospector for PostgresIntrospector {
         Ok(cols)
     }
 
+    #[tracing::instrument(level = "debug", name = "postgres.primary_key", skip(self))]
     async fn primary_key(&self, schema: Option<&str>, table: &str) -> Result<Option<PrimaryKey>> {
         let schema = self.schema_or_default(schema);
         let rows = sqlx::query(
@@ -256,6 +270,7 @@ impl SchemaIntrospector for PostgresIntrospector {
         Ok(Some(PrimaryKey { name, columns }))
     }
 
+    #[tracing::instrument(level = "debug", name = "postgres.foreign_keys", skip(self))]
     async fn foreign_keys(&self, schema: Option<&str>, table: &str) -> Result<Vec<ForeignKey>> {
         let schema = self.schema_or_default(schema);
         let rows = sqlx::query(
@@ -375,6 +390,12 @@ fn pg_cell_to_string(row: &sqlx::postgres::PgRow, idx: usize) -> String {
 
 #[async_trait]
 impl QueryRunner for PostgresIntrospector {
+    #[tracing::instrument(
+        level = "debug",
+        name = "postgres.run_sql",
+        skip(self, sql),
+        fields(sql_len = sql.len(), row_limit),
+    )]
     async fn run_sql(&self, sql: &str, row_limit: usize) -> Result<QueryResult> {
         let rows = sqlx::query(sql).fetch_all(&self.pool).await?;
         let truncated = rows.len() > row_limit;

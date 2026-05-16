@@ -64,6 +64,7 @@ impl SchemaIntrospector for DuckDbIntrospector {
         Backend::DuckDb
     }
 
+    #[tracing::instrument(level = "debug", name = "duckdb.tables", skip(self))]
     async fn tables(&self) -> Result<Vec<(Option<String>, String)>> {
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || {
@@ -84,6 +85,7 @@ impl SchemaIntrospector for DuckDbIntrospector {
         .map_err(|e| SchemadexError::Other(format!("duckdb join: {e}")))?
     }
 
+    #[tracing::instrument(level = "debug", name = "duckdb.columns", skip(self))]
     async fn columns(&self, schema: Option<&str>, table: &str) -> Result<Vec<Column>> {
         let conn = self.conn.clone();
         let schema = schema
@@ -129,6 +131,7 @@ impl SchemaIntrospector for DuckDbIntrospector {
         .map_err(|e| SchemadexError::Other(format!("duckdb join: {e}")))?
     }
 
+    #[tracing::instrument(level = "debug", name = "duckdb.primary_key", skip(self))]
     async fn primary_key(&self, schema: Option<&str>, table: &str) -> Result<Option<PrimaryKey>> {
         let conn = self.conn.clone();
         let schema = schema
@@ -163,6 +166,7 @@ impl SchemaIntrospector for DuckDbIntrospector {
         .map_err(|e| SchemadexError::Other(format!("duckdb join: {e}")))?
     }
 
+    #[tracing::instrument(level = "debug", name = "duckdb.foreign_keys", skip(self))]
     async fn foreign_keys(&self, schema: Option<&str>, table: &str) -> Result<Vec<ForeignKey>> {
         let conn = self.conn.clone();
         let schema = schema

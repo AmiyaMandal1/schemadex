@@ -11,7 +11,70 @@ use crate::model::{ColumnSample, SampleStats};
 pub const SENTINEL_THRESHOLD: f32 = 0.40;
 pub const DEFAULT_TOP_K: usize = 10;
 
-#[derive(Debug, Clone, Copy, Default)]
+/// Policy describing which columns to skip sampling for on safety grounds.
+///
+/// Matching is case-insensitive substring containment on the lowercased
+/// column name (or column comment). This is deliberately broader than an
+/// exact-match list — `email`, `email_address`, and `user_email` should all
+/// hit the same rule.
+#[derive(Debug, Clone)]
+pub struct RedactionPolicy {
+    /// Skip sampling for columns whose name matches any of these
+    /// case-insensitive substrings.
+    pub deny_substrings: Vec<String>,
+    /// Skip sampling for columns whose comment contains any of these.
+    pub deny_comment_substrings: Vec<String>,
+}
+
+impl RedactionPolicy {
+    /// Sensible PII defaults. Errs on the side of redacting — `password`,
+    /// `secret`, and `token` are catch-alls; column names like `passport`
+    /// and `credit_card` cover common HR/payments cases.
+    pub fn default_pii() -> Self {
+        Self {
+            deny_substrings: [
+                "email",
+                "phone",
+                "ssn",
+                "passport",
+                "credit_card",
+                "cvv",
+                "password",
+                "secret",
+                "token",
+                "api_key",
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+            deny_comment_substrings: [
+                "personally_identifiable",
+                "pii",
+                "gdpr_sensitive",
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+        }
+    }
+
+    /// Returns `true` when the column should be skipped by the sampler.
+    pub fn should_redact(&self, column_name: &str, column_comment: Option<&str>) -> bool {
+        let lname = column_name.to_lowercase();
+        if self.deny_substrings.iter().any(|s| lname.contains(s)) {
+            return true;
+        }
+        if let Some(c) = column_comment {
+            let lc = c.to_lowercase();
+            if self.deny_comment_substrings.iter().any(|s| lc.contains(s)) {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct SamplingPolicy {
     pub top_k: usize,
     pub sentinel_threshold: f32,
@@ -19,15 +82,28 @@ pub struct SamplingPolicy {
     /// with 10M distinct values).
     pub max_distinct: u64,
     pub sample_rows: u64,
+    /// Optional redaction policy. When `Some`, sample collection skips any
+    /// column whose name or comment matches the policy.
+    pub redaction: Option<RedactionPolicy>,
+}
+
+impl Default for SamplingPolicy {
+    fn default() -> Self {
+        Self::default_policy()
+    }
 }
 
 impl SamplingPolicy {
-    pub const fn default_policy() -> Self {
+    /// Construct the default policy. Returns a safe baseline with PII
+    /// redaction enabled — callers who want raw sampling must explicitly
+    /// clear `redaction` after construction.
+    pub fn default_policy() -> Self {
         Self {
             top_k: DEFAULT_TOP_K,
             sentinel_threshold: SENTINEL_THRESHOLD,
             max_distinct: 1_000,
             sample_rows: 10_000,
+            redaction: Some(RedactionPolicy::default_pii()),
         }
     }
 }
@@ -188,5 +264,42 @@ mod tests {
         assert_eq!(s.stats.max.as_deref(), Some("100"));
         assert_eq!(s.stats.p50.as_deref(), Some("50"));
         assert_eq!(s.stats.p95.as_deref(), Some("95"));
+    }
+
+    #[test]
+    fn default_pii_redacts_email_column() {
+        let policy = RedactionPolicy::default_pii();
+        assert!(policy.should_redact("email_address", None));
+        // Substring match is case-insensitive.
+        assert!(policy.should_redact("USER_Email", None));
+    }
+
+    #[test]
+    fn default_pii_redacts_pii_comment() {
+        let policy = RedactionPolicy::default_pii();
+        // Innocuous-looking column name, but the comment flags it.
+        assert!(policy.should_redact("notes", Some("personally_identifiable")));
+        // Also case-insensitive on the comment side.
+        assert!(policy.should_redact("notes", Some("Contains PII flag")));
+    }
+
+    #[test]
+    fn default_pii_does_not_redact_status() {
+        let policy = RedactionPolicy::default_pii();
+        assert!(!policy.should_redact("status", None));
+        assert!(!policy.should_redact("status", Some("workflow state")));
+    }
+
+    #[test]
+    fn default_policy_enables_redaction() {
+        // The default sampling policy must opt callers into PII safety so
+        // we don't accidentally ship sample values for `password` columns.
+        let p = SamplingPolicy::default_policy();
+        assert!(p.redaction.is_some());
+        assert!(p
+            .redaction
+            .as_ref()
+            .unwrap()
+            .should_redact("password", None));
     }
 }
