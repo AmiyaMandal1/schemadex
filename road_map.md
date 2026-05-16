@@ -230,6 +230,12 @@ The list below assumes 0.1.x ships and a few people try it. Items are ordered by
 - [x] **OpenTelemetry export.** New `otel` feature + `init_otel(service_name, otlp_endpoint)` ships existing tracing spans to OTLP collectors (commit `eeca069`).
 - [x] **MCP server health + Prometheus metrics.** `--metrics-port` flag exposes `/health` + `/metrics` (stdlib only) with run_sql counters and cache stats (commit `eeca069`).
 
+### v1.0 — stability commitment (~1 weekend)
+- [x] **Semver policy.** `docs/semver.md` enumerates public API surface (Python re-exports, Rust lib.rs re-exports, MCP tools, cache format) + a change-type → bump table (commit `124c0c2`).
+- [x] **Migration guide 0.x → 1.0.** `docs/migration-0.x-to-1.0.md` placeholder + cache-file v0.9 rename note already filled (commit `124c0c2`).
+- [x] **Deprecation policy.** `docs/deprecation.md` -- one minor-cycle warn before remove, CHANGELOG `Deprecated`/`Removed` sections, pre-1.0 exception (commit `124c0c2`).
+- [x] **API freeze audit.** New `schemadex-api-audit` binary prints the 25 locked-in public symbols as JSON; `integration_api_audit.rs` smoke test (commit `124c0c2`).
+
 ### Observability, safety, distribution (chip away in parallel)
 - [x] **`tracing` spans** on cache + every backend method; `RUST_LOG=schemadex=info,sqlx=warn` recipe documented (commit `a64633d`).
 - [x] **Sample-value redaction policy.** `RedactionPolicy::default_pii()` enabled by default on `SamplingPolicy::default_policy` (commit `a64633d`).
