@@ -27,6 +27,7 @@ from __future__ import annotations
 from . import _native
 from ._native import ResolveResult, SchemaCache, __version__
 from .embedding_resolve import resolve_with_embedding
+from . import dbt_source
 
 __all__ = [
     "SchemaCache",
@@ -38,8 +39,15 @@ __all__ = [
     "refresh_async",
     "refresh_table_async",
     "run_sql_async",
+    "dbt_source",
     "__version__",
 ]
+
+
+def load_ipython_extension(ipython):
+    """IPython entry point: makes ``%load_ext schemadex`` work."""
+    from . import jupyter
+    jupyter.load_ipython_extension(ipython)
 
 
 def resolve(cache: SchemaCache, table: str, candidate: str) -> ResolveResult:
