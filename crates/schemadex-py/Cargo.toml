@@ -16,10 +16,14 @@ name = "_native"
 crate-type = ["cdylib"]
 
 [features]
-default = ["postgres", "sqlite", "duckdb_backend"]
+default = ["postgres", "sqlite", "mysql", "duckdb_backend", "bigquery", "snowflake", "mssql"]
 postgres = ["schemadex-core/postgres"]
 sqlite = ["schemadex-core/sqlite"]
+mysql = ["schemadex-core/mysql"]
 duckdb_backend = ["schemadex-core/duckdb_backend"]
+bigquery = ["schemadex-core/bigquery"]
+snowflake = ["schemadex-core/snowflake"]
+mssql = ["schemadex-core/mssql"]
 
 [dependencies]
 schemadex-core = { workspace = true }

@@ -16,7 +16,11 @@ categories = ["database", "development-tools"]
 default = []
 postgres = ["sqlx/postgres", "sqlx/runtime-tokio-native-tls"]
 sqlite = ["sqlx/sqlite", "sqlx/runtime-tokio-native-tls"]
+mysql = ["sqlx/mysql", "sqlx/runtime-tokio-native-tls"]
 duckdb_backend = ["dep:duckdb"]
+bigquery = []
+snowflake = []
+mssql = []
 
 [dependencies]
 serde.workspace = true

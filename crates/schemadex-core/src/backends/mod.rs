@@ -7,8 +7,20 @@ pub mod postgres;
 #[cfg(feature = "sqlite")]
 pub mod sqlite;
 
+#[cfg(feature = "mysql")]
+pub mod mysql;
+
 #[cfg(feature = "duckdb_backend")]
 pub mod duckdb;
+
+#[cfg(feature = "bigquery")]
+pub mod bigquery;
+
+#[cfg(feature = "snowflake")]
+pub mod snowflake;
+
+#[cfg(feature = "mssql")]
+pub mod mssql;
 
 use crate::error::{Result, SchemadexError};
 use crate::introspector::{QueryRunner, SchemaIntrospector};
@@ -25,8 +37,8 @@ pub async fn connect(url: &str) -> Result<Arc<dyn SchemaIntrospector>> {
 /// Dispatch a URL to the right backend, optionally enabling sample-value
 /// collection on backends that support it.
 ///
-/// Currently only the postgres backend honors `sampling`; sqlite and duckdb
-/// silently ignore it.
+/// Currently only the postgres backend honors `sampling`; sqlite, mysql, and
+/// duckdb silently ignore it.
 pub async fn connect_with_sampling(
     url: &str,
     sampling: Option<crate::sampling::SamplingPolicy>,
@@ -50,12 +62,34 @@ pub async fn connect_with_sampling(
             let _ = sampling;
             Ok(Arc::new(sqlite::SqliteIntrospector::connect(url).await?))
         }
+        #[cfg(feature = "mysql")]
+        // TODO: thread `sampling` into the mysql backend once it supports
+        // sample-value collection.
+        "mysql" | "mariadb" => {
+            let _ = sampling;
+            Ok(Arc::new(mysql::MysqlIntrospector::connect(url).await?))
+        }
         #[cfg(feature = "duckdb_backend")]
         // TODO: thread `sampling` into the duckdb backend once it supports
         // sample-value collection.
         "duckdb" => {
             let _ = sampling;
             Ok(Arc::new(duckdb::DuckDbIntrospector::connect(url)?))
+        }
+        #[cfg(feature = "bigquery")]
+        "bigquery" => {
+            let _ = sampling;
+            Ok(Arc::new(bigquery::BigQueryIntrospector::connect(url)?))
+        }
+        #[cfg(feature = "snowflake")]
+        "snowflake" => {
+            let _ = sampling;
+            Ok(Arc::new(snowflake::SnowflakeIntrospector::connect(url)?))
+        }
+        #[cfg(feature = "mssql")]
+        "mssql" | "sqlserver" => {
+            let _ = sampling;
+            Ok(Arc::new(mssql::MssqlIntrospector::connect(url)?))
         }
         other => Err(SchemadexError::UnsupportedScheme(other.to_string())),
     }
@@ -76,6 +110,14 @@ pub async fn connect_runner(url: &str) -> Result<Arc<dyn QueryRunner>> {
         )),
         #[cfg(feature = "sqlite")]
         "sqlite" | "file" => Ok(Arc::new(sqlite::SqliteIntrospector::connect(url).await?)),
+        #[cfg(feature = "mysql")]
+        "mysql" | "mariadb" => Ok(Arc::new(mysql::MysqlIntrospector::connect(url).await?)),
+        #[cfg(feature = "bigquery")]
+        "bigquery" => Ok(Arc::new(bigquery::BigQueryIntrospector::connect(url)?)),
+        #[cfg(feature = "snowflake")]
+        "snowflake" => Ok(Arc::new(snowflake::SnowflakeIntrospector::connect(url)?)),
+        #[cfg(feature = "mssql")]
+        "mssql" | "sqlserver" => Ok(Arc::new(mssql::MssqlIntrospector::connect(url)?)),
         // TODO: wire up DuckDB once we decide how to bridge its sync API into
         // the async QueryRunner trait.
         other => Err(SchemadexError::UnsupportedScheme(other.to_string())),

@@ -23,7 +23,7 @@ pub enum SchemadexError {
     #[error("url parse error: {0}")]
     Url(#[from] url::ParseError),
 
-    #[cfg(any(feature = "postgres", feature = "sqlite"))]
+    #[cfg(any(feature = "postgres", feature = "sqlite", feature = "mysql"))]
     #[error("sqlx error: {0}")]
     Sqlx(#[from] sqlx::Error),
 

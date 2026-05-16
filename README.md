@@ -84,9 +84,10 @@ LLM SQL agents fail in the same three ways over and over:
 | Postgres | `postgres`         | ✅     |
 | SQLite   | `sqlite`           | ✅     |
 | DuckDB   | `duckdb_backend`   | ✅     |
-| MySQL    | —                  | planned (M8+) |
-| BigQuery | —                  | planned (M8+) |
-| Snowflake | —                 | planned (M8+) |
+| MySQL    | `mysql`            | ✅     |
+| BigQuery | `bigquery`         | 🛠 scaffold |
+| Snowflake | `snowflake`       | 🛠 scaffold |
+| MSSQL    | `mssql`            | 🛠 scaffold |
 
 ## MCP server
 

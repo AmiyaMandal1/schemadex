@@ -29,7 +29,11 @@ pub trait QueryRunner: Send + Sync {
 pub enum Backend {
     Postgres,
     Sqlite,
+    Mysql,
     DuckDb,
+    BigQuery,
+    Snowflake,
+    Mssql,
 }
 
 impl Backend {
@@ -37,7 +41,11 @@ impl Backend {
         match self {
             Backend::Postgres => "postgres",
             Backend::Sqlite => "sqlite",
+            Backend::Mysql => "mysql",
             Backend::DuckDb => "duckdb",
+            Backend::BigQuery => "bigquery",
+            Backend::Snowflake => "snowflake",
+            Backend::Mssql => "mssql",
         }
     }
 }
