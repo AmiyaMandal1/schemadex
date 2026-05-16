@@ -11,7 +11,7 @@
 
 **Decisions to lock now (don't revisit during build)**
 - [x] License: MIT OR Apache-2.0 (dual, Rust ecosystem norm)
-- [x] MSRV: Rust 1.75+ (gives you `async fn` in traits without `async-trait`)
+- [x] MSRV: Rust 1.80+ (bumped from 1.75 — Cargo.lock format v4 requires ≥1.78; pinned to 1.80 for headroom)
 - [x] Python support: 3.9, 3.10, 3.11, 3.12, 3.13
 - [x] Workspace layout: `crates/schemadex-core/`, `crates/schemadex-py/`, `examples/`, `benches/`
 - [x] PyPI distribution name: `schemadex` (single package, not split per backend)
