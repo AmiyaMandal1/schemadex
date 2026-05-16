@@ -200,10 +200,10 @@ The list below assumes 0.1.x ships and a few people try it. Items are ordered by
 - [x] **MCP server.** `schemadex-mcp --url ...` console script + FastMCP server exposing all four tools (commit `749a6f9`).
 
 ### v0.5 — new backends (~4 weekends, order by demand)
-- [ ] **MySQL** via `sqlx-mysql`. Mostly schema-introspection plumbing; PRs welcome.
-- [ ] **BigQuery** via the official Rust client. Schema lives in `INFORMATION_SCHEMA.COLUMNS` and `INFORMATION_SCHEMA.KEY_COLUMN_USAGE`. Auth via ADC.
-- [ ] **Snowflake** via REST API + standard JWT auth. Lower priority than BigQuery unless someone asks.
-- [ ] **MSSQL** via `tiberius`. Enterprise gravity.
+- [x] **MySQL** via `sqlx-mysql` — full introspection + QueryRunner, env-gated integration test (commit `0947198`).
+- [x] **BigQuery** scaffold landed — trait shape + polite-error dispatch, real client integration deferred to v1.0 (commit `0947198`).
+- [x] **Snowflake** scaffold landed — same shape (commit `0947198`).
+- [x] **MSSQL** scaffold landed — same shape (commit `0947198`).
 
 ### Observability, safety, distribution (chip away in parallel)
 - [ ] **`tracing` spans** around every backend call, with a `schemadex=info` env-filter recipe documented.
