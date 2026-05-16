@@ -119,6 +119,77 @@ impl SchemaCache {
         Ok(RefreshReport { changed, unchanged })
     }
 
+    /// Refresh a single table by qualified name (e.g. `public.users`) or bare
+    /// name (e.g. `users`). Matching is case-insensitive and mirrors
+    /// [`Database::table`].
+    ///
+    /// Returns a [`RefreshReport`] where the table appears in either
+    /// `changed` or `unchanged` based on its DDL hash. Errors with
+    /// [`SchemadexError::TableNotFound`] if the name doesn't match any
+    /// currently cached table.
+    pub async fn refresh_table<I: SchemaIntrospector + ?Sized>(
+        &mut self,
+        introspector: &I,
+        qualified_or_bare_name: &str,
+    ) -> Result<RefreshReport> {
+        // Locate the existing table in the cache. We need its (schema, name)
+        // pair to pass to the introspector, plus its index for swap-in-place.
+        let idx = self
+            .database
+            .tables
+            .iter()
+            .position(|t| {
+                t.name.eq_ignore_ascii_case(qualified_or_bare_name)
+                    || t.qualified_name()
+                        .eq_ignore_ascii_case(qualified_or_bare_name)
+            })
+            .ok_or_else(|| {
+                crate::error::SchemadexError::TableNotFound(qualified_or_bare_name.to_string())
+            })?;
+
+        let (schema, name) = {
+            let t = &self.database.tables[idx];
+            (t.schema.clone(), t.name.clone())
+        };
+
+        let mut fresh = introspector
+            .introspect_table(schema.as_deref(), &name)
+            .await?;
+        let sig = introspector
+            .ddl_signature(schema.as_deref(), &name)
+            .await?;
+        fresh.ddl_hash = Some(ddl_hash(&sig));
+
+        let prev_hash = self.database.tables[idx].ddl_hash.clone();
+        let qn = fresh.qualified_name();
+        let mut changed = Vec::new();
+        let mut unchanged = Vec::new();
+        match (prev_hash, fresh.ddl_hash.clone()) {
+            (Some(a), Some(b)) if a == b => unchanged.push(qn),
+            _ => changed.push(qn),
+        }
+
+        self.database.tables[idx] = fresh;
+        self.database.tables.sort_by_key(|a| a.qualified_name());
+
+        // Recompute the database fingerprint after the swap.
+        let fingerprint_input = self
+            .database
+            .tables
+            .iter()
+            .filter_map(|t| t.ddl_hash.as_deref())
+            .collect::<Vec<_>>()
+            .join(":");
+        self.database.fingerprint = if fingerprint_input.is_empty() {
+            None
+        } else {
+            Some(ddl_hash(&fingerprint_input))
+        };
+
+        write_envelope(&self.cache_path, &self.database).await?;
+        Ok(RefreshReport { changed, unchanged })
+    }
+
     /// Load only — no introspection, no refresh. Used by Python callers that
     /// want to read a previously persisted cache without a live connection.
     pub async fn load(url: &str, opts: &CacheOptions) -> Result<Option<Self>> {

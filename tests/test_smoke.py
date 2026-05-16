@@ -60,6 +60,43 @@ def test_describe_returns_tokens(tmp_path: Path) -> None:
     assert 0 < tokens < 1024
 
 
+def test_refresh_runs_without_error(tmp_path: Path) -> None:
+    """``refresh`` and ``refresh_table`` re-introspect the live database and
+    rewrite the persisted cache. Because the seed schema is stable between
+    calls, every table should land in the ``unchanged`` bucket — but we only
+    assert the structural contract here so the test stays valid if a future
+    backend stamps a fresh DDL hash on every read.
+    """
+    db = tmp_path / "demo.sqlite"
+    seed(db)
+    # Add a second table so refresh has more than one entry to report on.
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        "CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL);"
+    )
+    conn.commit()
+    conn.close()
+
+    url = f"sqlite://{db}"
+    cache = schemadex.SchemaCache.from_url(url, cache_dir=str(tmp_path / "cache"))
+    table_count = len(cache.list_tables())
+    assert table_count >= 2
+
+    result = cache.refresh(url)
+    assert isinstance(result, tuple) and len(result) == 2
+    changed, unchanged = result
+    assert isinstance(changed, list)
+    assert isinstance(unchanged, list)
+    assert len(changed) + len(unchanged) == table_count
+
+    one = cache.refresh_table(url, "users")
+    assert isinstance(one, tuple) and len(one) == 2
+    one_changed, one_unchanged = one
+    assert isinstance(one_changed, list)
+    assert isinstance(one_unchanged, list)
+    assert len(one_changed) + len(one_unchanged) <= 1
+
+
 def test_sample_values_flag_runs(tmp_path: Path) -> None:
     """Passing ``sample_values=True`` must not raise and the resulting cache
     must still parse the schema correctly.

@@ -13,7 +13,7 @@ use schemadex_core::{
     resolve_column as core_resolve, sampling::SamplingPolicy, DescribeOptions, ResolveResult,
     SchemaCache as CoreCache, SchemadexError,
 };
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 fn map_err(e: SchemadexError) -> PyErr {
@@ -29,6 +29,31 @@ fn rt() -> &'static tokio::runtime::Runtime {
             .build()
             .expect("failed to start tokio runtime")
     })
+}
+
+/// Build a [`SamplingPolicy`] from the Python kwargs that `from_url` /
+/// `refresh` / `refresh_table` all accept. Returns `None` when sampling is
+/// disabled so callers can pass it straight to `connect_with_sampling`.
+fn build_sampling_policy(
+    sample_values: bool,
+    sample_top_k: Option<usize>,
+    sample_sentinel_threshold: Option<f32>,
+    sample_rows: Option<u64>,
+) -> Option<SamplingPolicy> {
+    if !sample_values {
+        return None;
+    }
+    let mut policy = SamplingPolicy::default_policy();
+    if let Some(k) = sample_top_k {
+        policy.top_k = k;
+    }
+    if let Some(t) = sample_sentinel_threshold {
+        policy.sentinel_threshold = t;
+    }
+    if let Some(n) = sample_rows {
+        policy.sample_rows = n;
+    }
+    Some(policy)
 }
 
 #[pyclass(name = "ResolveResult", module = "schemadex")]
@@ -54,7 +79,7 @@ impl From<ResolveResult> for PyResolveResult {
 
 #[pyclass(name = "SchemaCache", module = "schemadex")]
 struct PySchemaCache {
-    inner: Arc<CoreCache>,
+    inner: Arc<Mutex<CoreCache>>,
 }
 
 #[pymethods]
@@ -95,21 +120,12 @@ impl PySchemaCache {
             cache_dir: cache_dir.map(std::path::PathBuf::from),
             parallel,
         };
-        let sampling = if sample_values {
-            let mut policy = SamplingPolicy::default_policy();
-            if let Some(k) = sample_top_k {
-                policy.top_k = k;
-            }
-            if let Some(t) = sample_sentinel_threshold {
-                policy.sentinel_threshold = t;
-            }
-            if let Some(n) = sample_rows {
-                policy.sample_rows = n;
-            }
-            Some(policy)
-        } else {
-            None
-        };
+        let sampling = build_sampling_policy(
+            sample_values,
+            sample_top_k,
+            sample_sentinel_threshold,
+            sample_rows,
+        );
         let cache = rt()
             .block_on(async move {
                 let introspector = backends::connect_with_sampling(&url, sampling).await?;
@@ -117,7 +133,7 @@ impl PySchemaCache {
             })
             .map_err(map_err)?;
         Ok(PySchemaCache {
-            inner: Arc::new(cache),
+            inner: Arc::new(Mutex::new(cache)),
         })
     }
 
@@ -133,15 +149,19 @@ impl PySchemaCache {
         let cache = rt()
             .block_on(async move { CoreCache::load(&url, &opts).await })
             .map_err(map_err)?;
-        Ok(cache.map(|c| PySchemaCache { inner: Arc::new(c) }))
+        Ok(cache.map(|c| PySchemaCache {
+            inner: Arc::new(Mutex::new(c)),
+        }))
     }
 
     fn list_tables(&self) -> Vec<String> {
-        self.inner.database().list_tables()
+        let guard = self.inner.lock().expect("poisoned");
+        guard.database().list_tables()
     }
 
     fn get_table<'py>(&self, py: Python<'py>, name: &str) -> PyResult<Option<Bound<'py, PyDict>>> {
-        let Some(table) = self.inner.database().table(name) else {
+        let guard = self.inner.lock().expect("poisoned");
+        let Some(table) = guard.database().table(name) else {
             return Ok(None);
         };
         let value =
@@ -151,8 +171,8 @@ impl PySchemaCache {
     }
 
     fn resolve(&self, table: &str, candidate: &str) -> PyResult<PyResolveResult> {
-        let t = self
-            .inner
+        let guard = self.inner.lock().expect("poisoned");
+        let t = guard
             .database()
             .table(table)
             .ok_or_else(|| PyRuntimeError::new_err(format!("table not found: {table}")))?;
@@ -175,20 +195,108 @@ impl PySchemaCache {
             include_samples,
             include_foreign_keys,
         };
-        core_describe(self.inner.database(), &opts).map_err(map_err)
+        let guard = self.inner.lock().expect("poisoned");
+        core_describe(guard.database(), &opts).map_err(map_err)
     }
 
     fn to_json(&self) -> PyResult<String> {
-        serde_json::to_string_pretty(self.inner.database())
+        let guard = self.inner.lock().expect("poisoned");
+        serde_json::to_string_pretty(guard.database())
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
     }
 
     fn cache_path(&self) -> PyResult<String> {
-        Ok(self.inner.cache_path().to_string_lossy().to_string())
+        let guard = self.inner.lock().expect("poisoned");
+        Ok(guard.cache_path().to_string_lossy().to_string())
     }
 
     fn fingerprint(&self) -> Option<String> {
-        self.inner.database().fingerprint.clone()
+        let guard = self.inner.lock().expect("poisoned");
+        guard.database().fingerprint.clone()
+    }
+
+    /// Re-introspect every table in this cache against ``url`` and rewrite
+    /// the persisted cache file. Returns ``(changed, unchanged)`` — two lists
+    /// of qualified table names partitioned by whether the DDL hash moved.
+    ///
+    /// The sampling kwargs mirror :meth:`from_url`. Omit them to skip
+    /// sample-value collection, or pass the same kwargs you used at
+    /// ``from_url`` time to keep behavior consistent.
+    #[pyo3(signature = (
+        url,
+        sample_values=false,
+        sample_top_k=None,
+        sample_sentinel_threshold=None,
+        sample_rows=None,
+        parallel=true,
+    ))]
+    fn refresh(
+        &self,
+        url: &str,
+        sample_values: bool,
+        sample_top_k: Option<usize>,
+        sample_sentinel_threshold: Option<f32>,
+        sample_rows: Option<u64>,
+        parallel: bool,
+    ) -> PyResult<(Vec<String>, Vec<String>)> {
+        let url = url.to_string();
+        let sampling = build_sampling_policy(
+            sample_values,
+            sample_top_k,
+            sample_sentinel_threshold,
+            sample_rows,
+        );
+        let inner = Arc::clone(&self.inner);
+        let report = rt()
+            .block_on(async move {
+                let introspector = backends::connect_with_sampling(&url, sampling).await?;
+                let mut guard = inner.lock().expect("poisoned");
+                guard.refresh(&*introspector, parallel).await
+            })
+            .map_err(map_err)?;
+        Ok((report.changed, report.unchanged))
+    }
+
+    /// Re-introspect a single table (matched by qualified or bare name,
+    /// case-insensitive) and rewrite the persisted cache file. Returns
+    /// ``(changed, unchanged)`` — two lists summing to at most one entry.
+    ///
+    /// Raises ``RuntimeError`` if the table is not present in the cache.
+    /// The sampling kwargs mirror :meth:`from_url`.
+    #[pyo3(signature = (
+        url,
+        table,
+        sample_values=false,
+        sample_top_k=None,
+        sample_sentinel_threshold=None,
+        sample_rows=None,
+    ))]
+    fn refresh_table(
+        &self,
+        url: &str,
+        table: &str,
+        sample_values: bool,
+        sample_top_k: Option<usize>,
+        sample_sentinel_threshold: Option<f32>,
+        sample_rows: Option<u64>,
+    ) -> PyResult<(Vec<String>, Vec<String>)> {
+        let url = url.to_string();
+        let table = table.to_string();
+        let sampling = build_sampling_policy(
+            sample_values,
+            sample_top_k,
+            sample_sentinel_threshold,
+            sample_rows,
+        );
+        let inner = Arc::clone(&self.inner);
+        let report = rt()
+            .block_on(async move {
+                let introspector = backends::connect_with_sampling(&url, sampling).await?;
+                let mut guard = inner.lock().expect("poisoned");
+                guard.refresh_table(&*introspector, &table).await
+            })
+            .map_err(map_err)?;
+        Ok((report.changed, report.unchanged))
     }
 }
 

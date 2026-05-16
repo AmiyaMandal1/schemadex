@@ -35,3 +35,21 @@ class SchemaCache:
     def to_json(self) -> str: ...
     def cache_path(self) -> str: ...
     def fingerprint(self) -> str | None: ...
+    def refresh(
+        self,
+        url: str,
+        sample_values: bool = False,
+        sample_top_k: int | None = None,
+        sample_sentinel_threshold: float | None = None,
+        sample_rows: int | None = None,
+        parallel: bool = True,
+    ) -> tuple[list[str], list[str]]: ...
+    def refresh_table(
+        self,
+        url: str,
+        table: str,
+        sample_values: bool = False,
+        sample_top_k: int | None = None,
+        sample_sentinel_threshold: float | None = None,
+        sample_rows: int | None = None,
+    ) -> tuple[list[str], list[str]]: ...
