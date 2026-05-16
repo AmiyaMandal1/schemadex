@@ -224,6 +224,12 @@ The list below assumes 0.1.x ships and a few people try it. Items are ordered by
 - [x] **dbt manifest source.** `schemadex.dbt_source.from_manifest(path)` projects dbt models into a synthetic SQLite mirror; offline / CI friendly (commit `0f8e5aa`).
 - [x] **Jupyter magic.** `%load_ext schemadex` + `%schemadex {list-tables,describe,resolve}` + `%schemadex_url` for sticky defaults (commit `0f8e5aa`).
 
+### v0.9 — scale + ops (~2 weekends)
+- [x] **Streaming `run_sql`.** `QueryRunner::run_sql_streaming` + per-backend BoxStream impl; early truncation via byte-based token estimate (commit `eeca069`).
+- [x] **Compressed cache.** `database.json.zst` via zstd level 3 + one-shot legacy migration from `database.json` (commit `eeca069`).
+- [x] **OpenTelemetry export.** New `otel` feature + `init_otel(service_name, otlp_endpoint)` ships existing tracing spans to OTLP collectors (commit `eeca069`).
+- [x] **MCP server health + Prometheus metrics.** `--metrics-port` flag exposes `/health` + `/metrics` (stdlib only) with run_sql counters and cache stats (commit `eeca069`).
+
 ### Observability, safety, distribution (chip away in parallel)
 - [x] **`tracing` spans** on cache + every backend method; `RUST_LOG=schemadex=info,sqlx=warn` recipe documented (commit `a64633d`).
 - [x] **Sample-value redaction policy.** `RedactionPolicy::default_pii()` enabled by default on `SamplingPolicy::default_policy` (commit `a64633d`).
