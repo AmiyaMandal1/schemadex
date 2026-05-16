@@ -205,6 +205,12 @@ The list below assumes 0.1.x ships and a few people try it. Items are ordered by
 - [x] **Snowflake** scaffold landed — same shape (commit `0947198`).
 - [x] **MSSQL** scaffold landed — same shape (commit `0947198`).
 
+### v0.6 — production hardening (~2 weekends)
+- [x] **Real cloud backends.** MSSQL via `tiberius` with full INFORMATION_SCHEMA path + live docker integration test (Azure SQL Edge for ARM64); BigQuery via `gcp-bigquery-client` 0.28 with ADC auth; Snowflake via SQL REST v2 + RS256 JWT (commit `b2607ec`).
+- [x] **Sampling for SQLite + MySQL + DuckDB.** Each backend gains `with_sampling` + per-column top-K / numeric / null / distinct queries. DuckDB fans out inside `tokio::task::spawn_blocking` (commit `b2607ec`).
+- [x] **Read-only enforcement on `run_sql`.** New `core::safety::assert_readonly` rejects non-SELECT statements (incl. EXPLAIN-wrapped writes + semicolon-compound writes). `allow_write=True` escape hatch on the Python surface (commit `b2607ec`).
+- [x] **Connection pool reuse.** Process-wide `OnceLock<Mutex<HashMap<url, Arc<dyn QueryRunner>>>>` via `backends::shared_runner`. Repeated `run_sql` skips the pool handshake (commit `b2607ec`).
+
 ### Observability, safety, distribution (chip away in parallel)
 - [x] **`tracing` spans** on cache + every backend method; `RUST_LOG=schemadex=info,sqlx=warn` recipe documented (commit `a64633d`).
 - [x] **Sample-value redaction policy.** `RedactionPolicy::default_pii()` enabled by default on `SamplingPolicy::default_policy` (commit `a64633d`).
