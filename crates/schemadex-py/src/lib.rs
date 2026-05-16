@@ -429,6 +429,30 @@ impl PySchemaCache {
             .map_err(map_err)
     }
 
+    /// Streaming variant of [`Self::run_sql`]. The backend consumes rows
+    /// one-at-a-time and stops as soon as the estimated token cost would
+    /// exceed ``token_budget``, so huge result sets never materialise fully
+    /// in memory. Returns ``(rendered_table, token_count)`` and always
+    /// applies the read-only safety check.
+    #[pyo3(signature = (url, sql, token_budget=1024))]
+    fn run_sql_streaming(
+        &self,
+        url: &str,
+        sql: &str,
+        token_budget: usize,
+    ) -> PyResult<(String, usize)> {
+        let url = url.to_string();
+        let sql = sql.to_string();
+        let inner = Arc::clone(&self.inner);
+        rt()
+            .block_on(async move {
+                let runner = backends::shared_runner(&url).await?;
+                let guard = inner.lock().expect("poisoned");
+                guard.run_sql_streaming(&*runner, &sql, token_budget).await
+            })
+            .map_err(map_err)
+    }
+
     /// Pre-validate a SQL query against the cached schema. Returns a list of
     /// issue dicts; an empty list means the query references only known
     /// tables and columns (per the heuristic — it is not a full SQL parser).

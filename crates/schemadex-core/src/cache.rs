@@ -83,7 +83,7 @@ impl SchemaCache {
         tracing::Span::current().record("url_hash", url_hash.as_str());
         let cache_dir = resolve_cache_dir(opts, &url_hash)?;
         tokio::fs::create_dir_all(&cache_dir).await?;
-        let cache_path = cache_dir.join("database.json");
+        let cache_path = cache_dir.join("database.json.zst");
 
         if let Some(existing) = read_envelope(&cache_path).await? {
             if !is_stale(&existing, opts.ttl) {
@@ -246,7 +246,7 @@ impl SchemaCache {
     pub async fn load(url: &str, opts: &CacheOptions) -> Result<Option<Self>> {
         let url_hash = hash_database_url(url);
         let cache_dir = resolve_cache_dir(opts, &url_hash)?;
-        let cache_path = cache_dir.join("database.json");
+        let cache_path = cache_dir.join("database.json.zst");
         match read_envelope(&cache_path).await? {
             Some(env) => Ok(Some(Self {
                 database: env.database,
@@ -333,13 +333,45 @@ async fn introspect_all<I: SchemaIntrospector + ?Sized>(
 }
 
 async fn read_envelope(path: &Path) -> Result<Option<CacheEnvelope>> {
+    // Primary path: zstd-compressed envelope at `database.json.zst`.
     match tokio::fs::read(path).await {
         Ok(bytes) => {
-            let env: CacheEnvelope = serde_json::from_slice(&bytes)?;
+            let decoded = zstd::decode_all(&bytes[..]).map_err(|e| {
+                crate::error::SchemadexError::Other(format!("zstd decode failed: {e}"))
+            })?;
+            let env: CacheEnvelope = serde_json::from_slice(&decoded)?;
             Ok(Some(env))
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // Legacy migration: pre-0.9 caches sat at `database.json` (pretty
+            // JSON, uncompressed). If we find one, decompress-and-rewrite it
+            // once so the next read hits the new path.
+            let legacy = legacy_path_for(path);
+            match tokio::fs::read(&legacy).await {
+                Ok(bytes) => {
+                    let env: CacheEnvelope = serde_json::from_slice(&bytes)?;
+                    write_envelope_at(path, &env).await?;
+                    // Drop the legacy file so we don't keep migrating it
+                    // every read. Failure here is non-fatal — the new file is
+                    // already in place.
+                    let _ = tokio::fs::remove_file(&legacy).await;
+                    Ok(Some(env))
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Err(e) => Err(e.into()),
+            }
+        }
         Err(e) => Err(e.into()),
+    }
+}
+
+fn legacy_path_for(path: &Path) -> PathBuf {
+    // `database.json.zst` -> `database.json`. If a caller hands us a path
+    // without the `.zst` suffix we leave it alone.
+    if path.extension().and_then(|s| s.to_str()) == Some("zst") {
+        path.with_extension("")
+    } else {
+        path.to_path_buf()
     }
 }
 
@@ -351,11 +383,19 @@ async fn write_envelope(path: &Path, db: &Database) -> Result<()> {
             .unwrap_or(0),
         database: db.clone(),
     };
-    let bytes = serde_json::to_vec_pretty(&env)?;
+    write_envelope_at(path, &env).await
+}
+
+async fn write_envelope_at(path: &Path, env: &CacheEnvelope) -> Result<()> {
+    // Compress with level 3 — a reasonable speed/ratio default for JSON.
+    let json = serde_json::to_vec(env)?;
+    let compressed = zstd::encode_all(&json[..], 3).map_err(|e| {
+        crate::error::SchemadexError::Other(format!("zstd encode failed: {e}"))
+    })?;
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
-    tokio::fs::write(path, bytes).await?;
+    tokio::fs::write(path, compressed).await?;
     Ok(())
 }
 

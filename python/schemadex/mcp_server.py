@@ -26,6 +26,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
@@ -34,16 +37,174 @@ from pydantic import Field
 from schemadex import SchemaCache
 
 
-def build_server(url: str) -> FastMCP:
+class _Metrics:
+    """Tiny thread-safe counter store for the optional ops endpoint.
+
+    Stdlib-only so we don't drag in `prometheus_client` for what amounts to
+    four counters. Each method takes the lock for the duration of a single
+    integer increment / read, which is cheap enough that the contention cost
+    is negligible compared to the SQL roundtrip it accompanies.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.run_sql_calls: int = 0
+        self.run_sql_errors: int = 0
+        self.introspection_seconds_total: float = 0.0
+        # Snapshot of `len(cache.list_tables())` last time we asked. Refreshed
+        # on every `/metrics` and `/health` hit so it tracks refreshes that
+        # happen after the server started.
+        self._tables_in_cache: int = 0
+
+    def inc_run_sql(self) -> None:
+        with self._lock:
+            self.run_sql_calls += 1
+
+    def inc_run_sql_error(self) -> None:
+        with self._lock:
+            self.run_sql_errors += 1
+
+    def add_introspection_time(self, seconds: float) -> None:
+        with self._lock:
+            self.introspection_seconds_total += seconds
+
+    def set_tables_in_cache(self, n: int) -> None:
+        with self._lock:
+            self._tables_in_cache = n
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "run_sql_calls": self.run_sql_calls,
+                "run_sql_errors": self.run_sql_errors,
+                "introspection_seconds_total": self.introspection_seconds_total,
+                "tables_in_cache": self._tables_in_cache,
+            }
+
+
+# One module-level instance; the build_server callable shares this with the
+# HTTP listener spawned by start_metrics_server. Tests reset it between cases
+# by reaching into the attribute directly.
+_metrics = _Metrics()
+
+
+def _make_handler(cache: SchemaCache, metrics: _Metrics):
+    """Build a BaseHTTPRequestHandler subclass that closes over `cache`/`metrics`.
+
+    Routes:
+      - GET /health   -> 200 + {"status":"ok","tables_in_cache": N}
+      - GET /metrics  -> 200 + Prometheus text exposition
+    Anything else returns 404.
+    """
+
+    class Handler(BaseHTTPRequestHandler):
+        def _refresh_table_count(self) -> int:
+            try:
+                n = len(cache.list_tables())
+            except Exception:  # pragma: no cover - defensive
+                n = 0
+            metrics.set_tables_in_cache(n)
+            return n
+
+        def do_GET(self) -> None:  # noqa: N802 - stdlib signature
+            if self.path == "/health":
+                n = self._refresh_table_count()
+                body = json.dumps(
+                    {"status": "ok", "tables_in_cache": n}
+                ).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if self.path == "/metrics":
+                self._refresh_table_count()
+                snap = metrics.snapshot()
+                lines = [
+                    "# HELP schemadex_cache_tables Tables currently in the schema cache.",
+                    "# TYPE schemadex_cache_tables gauge",
+                    f"schemadex_cache_tables {snap['tables_in_cache']}",
+                    "# HELP schemadex_introspection_seconds_total Cumulative time spent in introspection.",
+                    "# TYPE schemadex_introspection_seconds_total counter",
+                    f"schemadex_introspection_seconds_total {snap['introspection_seconds_total']}",
+                    "# HELP schemadex_run_sql_calls_total Number of run_sql invocations.",
+                    "# TYPE schemadex_run_sql_calls_total counter",
+                    f"schemadex_run_sql_calls_total {snap['run_sql_calls']}",
+                    "# HELP schemadex_run_sql_errors_total Number of run_sql errors.",
+                    "# TYPE schemadex_run_sql_errors_total counter",
+                    f"schemadex_run_sql_errors_total {snap['run_sql_errors']}",
+                    "",
+                ]
+                body = "\n".join(lines).encode("utf-8")
+                self.send_response(200)
+                self.send_header(
+                    "Content-Type", "text/plain; version=0.0.4; charset=utf-8"
+                )
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            self.send_response(404)
+            self.end_headers()
+
+        def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+            # Silence the default stderr access log — MCP runs over stdio and
+            # the chatter would leak into the protocol stream if a user pipes
+            # stderr around.
+            return
+
+    return Handler
+
+
+def start_metrics_server(
+    cache: SchemaCache,
+    port: int,
+    metrics: _Metrics | None = None,
+) -> tuple[HTTPServer, int, threading.Thread]:
+    """Start an HTTP listener on `port` exposing /health and /metrics.
+
+    Pass ``port=0`` to bind a random free port (useful in tests). Returns
+    ``(server, bound_port, thread)``; the thread is already daemonized and
+    running. Call ``server.shutdown()`` to stop it cleanly.
+    """
+    m = metrics if metrics is not None else _metrics
+    handler_cls = _make_handler(cache, m)
+    httpd = HTTPServer(("127.0.0.1", port), handler_cls)
+    bound_port = httpd.server_address[1]
+    thread = threading.Thread(
+        target=httpd.serve_forever, name="schemadex-metrics", daemon=True
+    )
+    thread.start()
+    return httpd, bound_port, thread
+
+
+def build_server(url: str, metrics: _Metrics | None = None) -> FastMCP:
     """Build a FastMCP server with the schemadex tools registered.
 
     Each tool ships with an explicit ``description`` and parameter schemas
     annotated via :class:`pydantic.Field`. The parameter metadata flows into
     the JSON Schema FastMCP emits for each tool, so agents that read the MCP
     tool catalog get a usable schema, not just ``{"type": "integer"}``.
+
+    Pass an explicit ``metrics`` instance to share counters with an external
+    HTTP listener (see :func:`start_metrics_server`). The default uses the
+    module-level singleton so a stdio-only deployment still gets accurate
+    counts if the ops endpoint is enabled later.
     """
+    m = metrics if metrics is not None else _metrics
+    introspect_start = time.perf_counter()
     cache = SchemaCache.from_url(url)
+    m.add_introspection_time(time.perf_counter() - introspect_start)
+    try:
+        m.set_tables_in_cache(len(cache.list_tables()))
+    except Exception:  # pragma: no cover - defensive
+        pass
     mcp = FastMCP("schemadex")
+    # Expose the cache on the server object so callers (and tests) can grab
+    # it without re-deriving it from the URL.
+    mcp._schemadex_cache = cache  # type: ignore[attr-defined]
+    mcp._schemadex_metrics = m  # type: ignore[attr-defined]
 
     @mcp.tool(description="List every table in the connected database.")
     def list_tables() -> list[str]:
@@ -147,7 +308,12 @@ def build_server(url: str) -> FastMCP:
             ),
         ] = 1024,
     ) -> str:
-        text, _ = cache.run_sql(url, sql, token_budget=token_budget)
+        m.inc_run_sql()
+        try:
+            text, _ = cache.run_sql(url, sql, token_budget=token_budget)
+        except Exception:
+            m.inc_run_sql_error()
+            raise
         return text
 
     @mcp.tool(
@@ -269,11 +435,32 @@ def main() -> int:
             "catalog rather than the MCP protocol."
         ),
     )
+    ap.add_argument(
+        "--metrics-port",
+        type=int,
+        default=None,
+        help=(
+            "Start an HTTP listener on the given port exposing /health "
+            "and /metrics (Prometheus text format). Pass 0 for a random "
+            "free port; useful for ops dashboards and Kubernetes probes."
+        ),
+    )
     args = ap.parse_args()
     server = build_server(args.url)
     if args.print_schemas:
         print(json.dumps(list_tools_for_export(server), indent=2))
         return 0
+    if args.metrics_port is not None:
+        cache = server._schemadex_cache  # type: ignore[attr-defined]
+        metrics = server._schemadex_metrics  # type: ignore[attr-defined]
+        _httpd, bound_port, _thread = start_metrics_server(
+            cache, args.metrics_port, metrics=metrics
+        )
+        # Stderr so it doesn't pollute the MCP stdio protocol channel.
+        print(
+            f"schemadex-mcp metrics listening on http://127.0.0.1:{bound_port}",
+            file=sys.stderr,
+        )
     server.run()
     return 0
 

@@ -21,6 +21,13 @@ duckdb_backend = ["dep:duckdb"]
 bigquery = ["dep:gcp-bigquery-client"]
 snowflake = ["dep:reqwest", "dep:jsonwebtoken", "dep:base64", "dep:rsa"]
 mssql = ["dep:tiberius", "dep:tokio-util", "tokio/net"]
+otel = [
+    "dep:opentelemetry",
+    "dep:opentelemetry_sdk",
+    "dep:opentelemetry-otlp",
+    "dep:tracing-opentelemetry",
+    "dep:tracing-subscriber",
+]
 
 [dependencies]
 serde.workspace = true
@@ -41,6 +48,7 @@ duckdb = { workspace = true, optional = true }
 strsim.workspace = true
 tiktoken-rs.workspace = true
 regex.workspace = true
+zstd.workspace = true
 tiberius = { version = "0.12", default-features = false, features = ["tds73", "rustls"], optional = true }
 tokio-util = { version = "0.7", features = ["compat"], optional = true }
 gcp-bigquery-client = { version = "0.28", default-features = false, features = ["rust-tls", "ring"], optional = true }
@@ -48,6 +56,11 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 jsonwebtoken = { version = "9", optional = true }
 base64 = { version = "0.22", optional = true }
 rsa = { version = "0.9", features = ["pem"], optional = true }
+opentelemetry = { version = "0.24", optional = true }
+opentelemetry_sdk = { version = "0.24", features = ["rt-tokio"], optional = true }
+opentelemetry-otlp = { version = "0.17", features = ["grpc-tonic"], optional = true }
+tracing-opentelemetry = { version = "0.25", optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "rt-multi-thread", "macros"] }

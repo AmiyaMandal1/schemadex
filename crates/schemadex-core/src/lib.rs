@@ -21,6 +21,11 @@ pub mod validate;
 
 pub mod backends;
 
+#[cfg(feature = "otel")]
+pub mod otel;
+#[cfg(feature = "otel")]
+pub use crate::otel::init_otel;
+
 pub use crate::agent::{describe_for_agent, DescribeOptions};
 pub use crate::cache::SchemaCache;
 pub use crate::error::{Result, SchemadexError};
@@ -193,6 +198,37 @@ impl SchemaCache {
             cols = result.columns.len(),
             truncated = result.truncated,
             "schema_cache.run_sql.fetched"
+        );
+        render_table_for_agent(&result, token_budget)
+    }
+
+    /// Streaming variant of [`SchemaCache::run_sql`]. The runner consumes
+    /// rows one-at-a-time and stops as soon as the estimated token cost
+    /// would exceed `token_budget`, so huge result sets never materialise
+    /// fully in memory. The final markdown is still re-counted by
+    /// [`render_table_for_agent`] for accuracy.
+    #[tracing::instrument(
+        level = "info",
+        name = "schema_cache.run_sql_streaming",
+        skip(self, runner, sql),
+        fields(
+            sql_len = sql.len(),
+            token_budget,
+        ),
+    )]
+    pub async fn run_sql_streaming<R: QueryRunner + ?Sized>(
+        &self,
+        runner: &R,
+        sql: &str,
+        token_budget: usize,
+    ) -> Result<(String, usize)> {
+        safety::assert_readonly(sql)?;
+        let result = runner.run_sql_streaming(sql, token_budget).await?;
+        tracing::debug!(
+            rows = result.rows.len(),
+            cols = result.columns.len(),
+            truncated = result.truncated,
+            "schema_cache.run_sql_streaming.fetched"
         );
         render_table_for_agent(&result, token_budget)
     }

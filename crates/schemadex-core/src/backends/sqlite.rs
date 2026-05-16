@@ -2,10 +2,13 @@
 //! databases — we ignore attachments by default).
 
 use crate::error::Result;
-use crate::introspector::{Backend, QueryResult, QueryRunner, SchemaIntrospector};
+use crate::introspector::{
+    estimate_tokens_from_bytes, Backend, QueryResult, QueryRunner, SchemaIntrospector,
+};
 use crate::model::{Column, DataType, ForeignKey, PrimaryKey};
 use crate::sampling::{categorical_sample, numeric_sample, SamplingPolicy};
 use async_trait::async_trait;
+use futures::StreamExt;
 use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 use sqlx::{Column as _, Row, TypeInfo, ValueRef};
 
@@ -322,6 +325,50 @@ impl QueryRunner for SqliteIntrospector {
                 row.push(sqlite_cell_to_string(r, i));
             }
             out_rows.push(row);
+        }
+
+        Ok(QueryResult {
+            columns,
+            rows: out_rows,
+            truncated,
+        })
+    }
+
+    #[tracing::instrument(
+        level = "debug",
+        name = "sqlite.run_sql_streaming",
+        skip(self, sql),
+        fields(sql_len = sql.len(), token_budget),
+    )]
+    async fn run_sql_streaming(&self, sql: &str, token_budget: usize) -> Result<QueryResult> {
+        let mut stream = sqlx::query(sql).fetch(&self.pool);
+        let mut columns: Vec<String> = Vec::new();
+        let mut out_rows: Vec<Vec<String>> = Vec::new();
+        let mut tokens_so_far: usize = 0;
+        let mut truncated = false;
+
+        while let Some(row) = stream.next().await {
+            let row = row?;
+            if columns.is_empty() {
+                columns = row.columns().iter().map(|c| c.name().to_string()).collect();
+            }
+            let mut cells = Vec::with_capacity(columns.len());
+            let mut row_bytes: usize = 0;
+            for i in 0..row.columns().len() {
+                let cell = sqlite_cell_to_string(&row, i);
+                row_bytes = row_bytes.saturating_add(cell.len());
+                cells.push(cell);
+            }
+            // Approximate token cost of *adding* this row. If we'd blow past
+            // the budget, mark truncated and stop. The renderer trims further
+            // for precision.
+            let row_tokens = estimate_tokens_from_bytes(row_bytes);
+            if tokens_so_far.saturating_add(row_tokens) > token_budget && !out_rows.is_empty() {
+                truncated = true;
+                break;
+            }
+            tokens_so_far = tokens_so_far.saturating_add(row_tokens);
+            out_rows.push(cells);
         }
 
         Ok(QueryResult {

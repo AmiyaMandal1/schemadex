@@ -23,6 +23,33 @@ pub trait QueryRunner: Send + Sync {
     /// Execute `sql` and return up to `row_limit` rows as a homogeneous
     /// table of strings (one row per inner `Vec`).
     async fn run_sql(&self, sql: &str, row_limit: usize) -> Result<QueryResult>;
+
+    /// Stream rows one-at-a-time and stop early once `token_budget`
+    /// (approximate, see below) would be exhausted. Default impl falls back
+    /// to [`QueryRunner::run_sql`] with a `row_limit` of 200.
+    ///
+    /// The token estimate is intentionally cheap: it multiplies the cell-byte
+    /// width of each row by `~0.3` (one token ≈ 3-4 bytes for typical
+    /// ascii-ish data) instead of running a real tokenizer in the hot loop.
+    /// `render_table_for_agent` re-counts precisely on the final rendered
+    /// markdown, so the streaming layer just needs to bail out early enough
+    /// that the renderer has room to work.
+    async fn run_sql_streaming(
+        &self,
+        sql: &str,
+        token_budget: usize,
+    ) -> Result<QueryResult> {
+        let _ = token_budget;
+        self.run_sql(sql, 200).await
+    }
+}
+
+/// Convert a byte-length to a token estimate. 1 token ≈ 3-4 bytes for typical
+/// SQL-result payloads (mixed ascii / numeric), so 0.3 tokens/byte is a safe
+/// overestimate that keeps the streaming layer from blowing past the budget.
+pub fn estimate_tokens_from_bytes(bytes: usize) -> usize {
+    // (bytes * 3) / 10 -> ~0.3 tokens per byte. Integer math; no f64.
+    bytes.saturating_mul(3) / 10
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
