@@ -1,0 +1,52 @@
+[build-system]
+requires = ["maturin>=1.13,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "schemadex"
+description = "Schema introspection and resolution toolkit for SQL agents"
+readme = "README.md"
+license = { text = "MIT OR Apache-2.0" }
+requires-python = ">=3.9"
+keywords = ["sql", "schema", "introspection", "agents", "llm"]
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
+    "Topic :: Database",
+    "Topic :: Software Development :: Libraries",
+]
+authors = [{ name = "Amiya Mandal", email = "amiya19mandal@gmail.com" }]
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/AmiyaMandal1/schemadex"
+Repository = "https://github.com/AmiyaMandal1/schemadex"
+Issues = "https://github.com/AmiyaMandal1/schemadex/issues"
+
+[project.optional-dependencies]
+langchain = ["langchain-core>=0.2"]
+langgraph = ["langgraph>=0.2"]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.6",
+    "maturin>=1.13.3",
+]
+
+[tool.maturin]
+manifest-path = "crates/schemadex-py/Cargo.toml"
+module-name = "schemadex._native"
+python-source = "python"
+features = ["pyo3/extension-module"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"

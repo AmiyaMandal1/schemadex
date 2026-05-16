@@ -1,0 +1,36 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/schemadex-core",
+    "crates/schemadex-py",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/AmiyaMandal1/schemadex"
+homepage = "https://github.com/AmiyaMandal1/schemadex"
+authors = ["Amiya Mandal <amiya19mandal@gmail.com>"]
+
+[workspace.dependencies]
+schemadex-core = { path = "crates/schemadex-core", version = "0.1.0" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.40", features = ["rt-multi-thread", "macros", "sync", "fs"] }
+thiserror = "1.0"
+anyhow = "1.0"
+async-trait = "0.1"
+futures = "0.3"
+sha2 = "0.10"
+hex = "0.4"
+dirs = "5.0"
+url = "2.5"
+tracing = "0.1"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "macros"] }
+duckdb = { version = "1.1", features = ["bundled"] }
+pyo3 = { version = "0.22", features = ["extension-module", "abi3-py39"] }
+pyo3-async-runtimes = { version = "0.22", features = ["tokio-runtime"] }
+strsim = "0.11"
+tiktoken-rs = "0.6"

@@ -1,0 +1,25 @@
+name: Bug report
+description: Something doesn't work as documented.
+labels: [bug]
+body:
+  - type: textarea
+    attributes:
+      label: What happened?
+      description: One-paragraph summary, plus the smallest reproduction you can produce.
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: schemadex version
+    validations:
+      required: true
+  - type: dropdown
+    attributes:
+      label: Backend
+      options: [postgres, sqlite, duckdb, other]
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Logs
+      description: Relevant tracing/log output if available.

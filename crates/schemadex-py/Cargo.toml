@@ -1,0 +1,29 @@
+[package]
+name = "schemadex-py"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "Python bindings for schemadex"
+readme = "../../README.md"
+publish = false
+
+[lib]
+name = "_native"
+crate-type = ["cdylib"]
+
+[features]
+default = ["postgres", "sqlite", "duckdb_backend"]
+postgres = ["schemadex-core/postgres"]
+sqlite = ["schemadex-core/sqlite"]
+duckdb_backend = ["schemadex-core/duckdb_backend"]
+
+[dependencies]
+schemadex-core = { workspace = true }
+pyo3.workspace = true
+pyo3-async-runtimes.workspace = true
+tokio.workspace = true
+serde_json.workspace = true
