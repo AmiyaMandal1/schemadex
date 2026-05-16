@@ -188,10 +188,10 @@ The list below assumes 0.1.x ships and a few people try it. Items are ordered by
 - [x] **Per-table `refresh(table=...)` on Python API.** Added `SchemaCache::refresh_table` in core + `PySchemaCache.refresh` / `.refresh_table` on the Python surface, both returning `(changed, unchanged)`. New smoke test exercises both call shapes (commit `5098fcd`).
 
 ### v0.3 — real-LLM bench teeth (~2 weekends)
-- [ ] **Three-axis ablation.** Instead of "baseline vs treatment", run 4 cells: {schema dump, schemadex describe} × {no resolve, resolve}. Today's bench bundles the contributions; the ablation isolates each.
-- [ ] **Token-budget stress run.** Re-run the Ollama bench at `max_tokens=512` and `max_tokens=256`. This is where `describe_for_agent` is supposed to dominate; today's `max_tokens=1024` doesn't pressure-test it.
-- [ ] **Sample-value contribution case.** Build a 5-record corpus where the question is unanswerable without seeing that 80% of `delay_code` is `'No Delay'`. Run baseline (no samples) vs treatment (samples on). This is the Nokia story made measurable.
-- [ ] **BIRD-mini wiring.** Replace the stub `baseline.py` / `treatment.py` with a real call into BIRD-mini using an Anthropic or OpenAI key from `$ANTHROPIC_API_KEY` / `$OPENAI_API_KEY`. Gate the CI job on the secret being present so the harness still type-checks without one.
+- [x] **Three-axis ablation.** `run_ablation.py` runs the 4-cell grid (commit `38191f3`).
+- [x] **Token-budget stress run.** `run_token_budget.py` sweeps `max_tokens` at 256/512/1024 (commit `38191f3`).
+- [x] **Sample-value contribution case.** `sentinel_corpus.py` + `run_sentinel.py` ship a 5-question corpus. On qwen2.5-coder:3b baseline 0/5 → treatment 4/5 (commit `38191f3`).
+- [x] **BIRD-mini wiring.** `run_bird_mini.py` lands as a stdlib-HTTP stub gated on `$ANTHROPIC_API_KEY` / `$OPENAI_API_KEY` (commit `38191f3`).
 
 ### v0.4 — semantic resolution + agent ergonomics (~3 weekends)
 - [ ] **Embedding-based fallback for low-confidence matches.** When Jaro-Winkler scores below 0.85, query a local embedding model (the existing `nomic-embed-text-v2-moe` on the user's Ollama would do) and re-rank. Tied: figures out `state` → `status` and `body` → `review_body`, the two synthetic misses.
