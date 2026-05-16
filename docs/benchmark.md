@@ -74,4 +74,38 @@ Output (committed under `benches/agent-success/out/synthetic_*.json`):
 
 This isolates **the resolution-path contribution**. Two of the 38 records still miss because their confidence is below the 0.85 floor (`state` → `status`, `body` → `review_body` are semantic-only matches that Jaro-Winkler scores lower than the lexical near-misses). Lower the floor and treatment success climbs further, at the cost of false-positive risk on totally unrelated names.
 
-It does **not** measure: end-to-end LLM SQL accuracy, token-budget contributions, sentinel-flag contributions, cache-hit contributions. Those need the live-LLM harness in `baseline.py` / `treatment.py`.
+It does **not** measure: end-to-end LLM SQL accuracy, token-budget contributions, sentinel-flag contributions, cache-hit contributions. Those need the live-LLM harness below.
+
+## Ollama harness
+
+`benches/agent-success/run_ollama.py` runs the same corpus through a local LLM via the Ollama HTTP API.
+
+- **Baseline prompt:** raw `table(col1, col2, ...)` dump, no ranking, no samples. Model emits `{"table": ..., "column": ...}`.
+- **Treatment prompt:** `describe_for_agent(hint=question, max_tokens=1024)` dump, followed by `resolve_column` post-correction at confidence ≥ 0.85.
+
+Run:
+
+```bash
+ollama serve &
+ollama pull qwen2.5-coder:3b
+python benches/agent-success/synthetic_corpus.py
+python benches/agent-success/run_ollama.py --model qwen2.5-coder:3b --n 0
+```
+
+Result on `qwen2.5-coder:3b` (38 records, Apple M2 Max):
+
+| Metric              | Baseline | Treatment |
+|---------------------|---------:|----------:|
+| n                   |       38 |        38 |
+| success_rate        |    0.974 |     1.000 |
+| median_retries      |    0.000 |     0.000 |
+| median_latency_ms   |  283.158 |   294.852 |
+| p95_latency_ms      |  331.242 |   446.319 |
+
+The single baseline miss was `"What is the orderid on shipments?"` — the model picked `id` (the shipments PK) instead of `order_id` (the FK). `resolve_column` corrected it.
+
+### Caveats
+
+- A 3B code model is *good* at unscrambling typos when it sees the whole schema; +2.6 pp is the headroom left for resolve_column on top.
+- Treatment adds ~10 ms p50 / ~115 ms p95 over baseline. That's the cost of the longer prompt (richer per-column metadata) plus the resolve step. On a real agent loop where each retry is a full second, +12% latency to drop the retry-loop entirely is a clear win.
+- The full BIRD/Spider harness is still required for end-to-end SQL accuracy numbers; this Ollama harness only measures column-naming, not query construction.
