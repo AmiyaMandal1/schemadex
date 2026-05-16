@@ -86,3 +86,4 @@ benches/agent-success/out/
 
 # ralph-loop local state
 .claude/ralph-loop.local.md
+.claude/scheduled_tasks.lock
