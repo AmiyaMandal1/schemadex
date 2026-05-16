@@ -263,7 +263,7 @@ impl PySchemaCache {
         self.synonyms_for_path(path).map(|_| ())
     }
 
-    #[pyo3(signature = (max_tokens=2048, hint=None, tables=None, include_samples=true, include_foreign_keys=true))]
+    #[pyo3(signature = (max_tokens=2048, hint=None, tables=None, include_samples=true, include_foreign_keys=true, include_examples=false))]
     fn describe_for_agent(
         &self,
         max_tokens: usize,
@@ -271,6 +271,7 @@ impl PySchemaCache {
         tables: Option<Vec<String>>,
         include_samples: bool,
         include_foreign_keys: bool,
+        include_examples: bool,
     ) -> PyResult<(String, usize)> {
         let opts = DescribeOptions {
             max_tokens,
@@ -278,9 +279,31 @@ impl PySchemaCache {
             tables,
             include_samples,
             include_foreign_keys,
+            include_examples,
         };
         let guard = self.inner.lock().expect("poisoned");
         core_describe(guard.database(), &opts).map_err(map_err)
+    }
+
+    /// Generate a handful of valid SELECT statements for `table`. These are
+    /// the same few-shot examples that :meth:`describe_for_agent` embeds when
+    /// ``include_examples=True`` — exposed standalone so callers can render
+    /// them in their own prompts.
+    ///
+    /// Raises ``RuntimeError`` if the table is not in the cache.
+    #[pyo3(signature = (table, max_examples=None))]
+    fn examples_for_table(
+        &self,
+        table: &str,
+        max_examples: Option<usize>,
+    ) -> PyResult<Vec<String>> {
+        let max = max_examples.unwrap_or(4);
+        let guard = self.inner.lock().expect("poisoned");
+        let t = guard
+            .database()
+            .table(table)
+            .ok_or_else(|| PyRuntimeError::new_err(format!("table not found: {table}")))?;
+        Ok(schemadex_core::generate_examples(t, max))
     }
 
     fn to_json(&self) -> PyResult<String> {

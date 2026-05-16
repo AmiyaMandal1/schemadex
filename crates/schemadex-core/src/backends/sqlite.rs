@@ -177,8 +177,12 @@ impl SchemaIntrospector for SqliteIntrospector {
 
     #[tracing::instrument(level = "debug", name = "sqlite.columns", skip(self))]
     async fn columns(&self, _schema: Option<&str>, table: &str) -> Result<Vec<Column>> {
-        let sql = format!("PRAGMA table_info(\"{}\")", table.replace('"', ""));
-        let rows = sqlx::query(&sql).fetch_all(&self.pool).await?;
+        let t_clean = table.replace('"', "");
+        // Use table_xinfo when available — it exposes the `hidden` flag we
+        // need to detect generated columns. Falls back to table_info on older
+        // SQLite (no hidden column).
+        let xinfo_sql = format!("PRAGMA table_xinfo(\"{}\")", t_clean);
+        let rows = sqlx::query(&xinfo_sql).fetch_all(&self.pool).await?;
         let mut cols = Vec::with_capacity(rows.len());
         for r in rows {
             let ordinal: i64 = r.try_get("cid").unwrap_or(0);
@@ -186,16 +190,92 @@ impl SchemaIntrospector for SqliteIntrospector {
             let decl: String = r.try_get("type")?;
             let nullable_flag: i64 = r.try_get("notnull").unwrap_or(0);
             let default: Option<String> = r.try_get("dflt_value").ok();
+            // SQLite encodes generated columns via PRAGMA table_xinfo's
+            // `hidden` column: 2 = STORED, 3 = VIRTUAL. The expression
+            // itself is reported as `dflt_value`.
+            let hidden: i64 = r.try_get("hidden").unwrap_or(0);
+            let generation_expression = if hidden == 2 || hidden == 3 {
+                default.clone()
+            } else {
+                None
+            };
+            // For generated columns the "default" slot holds the generation
+            // expression rather than a literal default — null it out so the
+            // two fields don't collide.
+            let default_val = if generation_expression.is_some() {
+                None
+            } else {
+                default
+            };
             cols.push(Column {
                 name,
                 data_type: classify(&decl),
                 native_type: decl,
                 nullable: nullable_flag == 0,
-                default,
+                default: default_val,
                 comment: None,
                 ordinal: ordinal as i32,
                 sample: None,
+                check_constraint: None,
+                is_unique: false,
+                generation_expression,
             });
+        }
+
+        // UNIQUE detection via PRAGMA index_list + index_info. A column is
+        // marked unique iff it participates in a single-column UNIQUE index.
+        if let Ok(idx_rows) = sqlx::query(&format!("PRAGMA index_list(\"{}\")", t_clean))
+            .fetch_all(&self.pool)
+            .await
+        {
+            for ir in idx_rows {
+                let unique_flag: i64 = ir.try_get("unique").unwrap_or(0);
+                if unique_flag == 0 {
+                    continue;
+                }
+                let idx_name: String = match ir.try_get("name") {
+                    Ok(n) => n,
+                    Err(_) => continue,
+                };
+                let info_rows = sqlx::query(&format!(
+                    "PRAGMA index_info(\"{}\")",
+                    idx_name.replace('"', "")
+                ))
+                .fetch_all(&self.pool)
+                .await;
+                let Ok(info_rows) = info_rows else { continue };
+                if info_rows.len() != 1 {
+                    continue;
+                }
+                if let Ok(cname) = info_rows[0].try_get::<String, _>("name") {
+                    if let Some(c) = cols.iter_mut().find(|c| c.name == cname) {
+                        c.is_unique = true;
+                    }
+                }
+            }
+        }
+        // Single-column PRIMARY KEY also acts as UNIQUE — mark it so the
+        // describe output communicates that property uniformly. (Composite
+        // PKs don't propagate; a single member of a composite isn't unique
+        // on its own.)
+        if let Ok(pk_rows) = sqlx::query(&format!("PRAGMA table_info(\"{}\")", t_clean))
+            .fetch_all(&self.pool)
+            .await
+        {
+            let mut pk_names: Vec<String> = Vec::new();
+            for r in &pk_rows {
+                let order: i64 = r.try_get("pk").unwrap_or(0);
+                if order > 0 {
+                    if let Ok(n) = r.try_get::<String, _>("name") {
+                        pk_names.push(n);
+                    }
+                }
+            }
+            if pk_names.len() == 1 {
+                if let Some(c) = cols.iter_mut().find(|c| c.name == pk_names[0]) {
+                    c.is_unique = true;
+                }
+            }
         }
 
         if let Some(policy) = self.sampling.as_ref() {

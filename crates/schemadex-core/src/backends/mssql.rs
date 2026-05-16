@@ -238,6 +238,9 @@ impl SchemaIntrospector for MssqlIntrospector {
                 comment: None,
                 ordinal,
                 sample: None,
+                check_constraint: None,
+                is_unique: false,
+                generation_expression: None,
             });
         }
         Ok(cols)

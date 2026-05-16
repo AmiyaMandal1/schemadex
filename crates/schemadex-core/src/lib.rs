@@ -9,6 +9,7 @@
 pub mod agent;
 pub mod cache;
 pub mod error;
+pub mod examples;
 pub mod fingerprint;
 pub mod hint;
 pub mod introspector;
@@ -29,6 +30,7 @@ pub use crate::otel::init_otel;
 pub use crate::agent::{describe_for_agent, DescribeOptions};
 pub use crate::cache::SchemaCache;
 pub use crate::error::{Result, SchemadexError};
+pub use crate::examples::{generate_examples, generate_examples_for_database};
 pub use crate::hint::{hint_for_error, ErrorHint, HintKind};
 pub use crate::introspector::{Backend, QueryResult, QueryRunner, SchemaIntrospector};
 pub use crate::model::{

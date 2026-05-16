@@ -225,6 +225,9 @@ impl SchemaIntrospector for BigQueryIntrospector {
                 comment: f.description.clone(),
                 ordinal: (i + 1) as i32,
                 sample: None,
+                check_constraint: None,
+                is_unique: false,
+                generation_expression: None,
             });
         }
         Ok(cols)

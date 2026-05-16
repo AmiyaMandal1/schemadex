@@ -88,6 +88,9 @@ mod tests {
             comment: None,
             ordinal: 0,
             sample: None,
+            check_constraint: None,
+            is_unique: false,
+            generation_expression: None,
         }
     }
 

@@ -48,6 +48,16 @@ pub struct Column {
     pub ordinal: i32,
     #[serde(default)]
     pub sample: Option<ColumnSample>,
+    /// CHECK constraint expression text (e.g. `amount > 0`). Backend-dependent.
+    #[serde(default)]
+    pub check_constraint: Option<String>,
+    /// True when the column is constrained UNIQUE — either via a UNIQUE
+    /// constraint or via a single-column UNIQUE index.
+    #[serde(default)]
+    pub is_unique: bool,
+    /// Expression for `GENERATED ALWAYS AS (expr)` columns. Backend-dependent.
+    #[serde(default)]
+    pub generation_expression: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

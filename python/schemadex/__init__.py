@@ -66,14 +66,21 @@ def describe_for_agent(
     tables: list[str] | None = None,
     include_samples: bool = True,
     include_foreign_keys: bool = True,
+    include_examples: bool = False,
 ) -> tuple[str, int]:
-    """Render a token-budgeted schema description and return ``(text, token_count)``."""
+    """Render a token-budgeted schema description and return ``(text, token_count)``.
+
+    Set ``include_examples=True`` to append a short list of generated
+    few-shot SELECT statements per table. Examples are dropped before
+    comments when the budget is tight.
+    """
     return cache.describe_for_agent(
         max_tokens=max_tokens,
         hint=hint,
         tables=tables,
         include_samples=include_samples,
         include_foreign_keys=include_foreign_keys,
+        include_examples=include_examples,
     )
 
 

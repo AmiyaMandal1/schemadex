@@ -2,6 +2,7 @@
 //! produces a compact, ranked schema description suitable for an LLM prompt.
 
 use crate::error::{Result, SchemadexError};
+use crate::examples::generate_examples;
 use crate::model::{Database, Table};
 
 #[derive(Debug, Clone)]
@@ -11,6 +12,10 @@ pub struct DescribeOptions {
     pub tables: Option<Vec<String>>,
     pub include_samples: bool,
     pub include_foreign_keys: bool,
+    /// When true, append a short list of generated few-shot SELECT examples
+    /// after each table's columns + FKs. Off by default — examples cost
+    /// tokens and most agents do fine without them.
+    pub include_examples: bool,
 }
 
 impl Default for DescribeOptions {
@@ -21,16 +26,21 @@ impl Default for DescribeOptions {
             tables: None,
             include_samples: true,
             include_foreign_keys: true,
+            include_examples: false,
         }
     }
 }
 
 /// Render a token-budgeted description of a schema. Truncation hierarchy:
 /// 1. Drop unrelated tables (low relevance to `hint`)
-/// 2. Drop sample values
-/// 3. Drop column comments
-/// 4. Drop foreign keys
-/// 5. Drop columns beyond ordinal 8 per table
+/// 2. Drop sample values (`[n=…]`, `[sentinel: …]`, `[top: …]`)
+/// 3. Drop few-shot examples (only present when `include_examples`)
+/// 4. Drop column comments (and the `-- CHECK …` annotation that rides them)
+/// 5. Drop foreign keys
+/// 6. Drop columns beyond ordinal 8 per table
+///
+/// `UNIQUE` and `GENERATED AS (…)` annotations live on the column type line
+/// itself and are not dropped — they're cheap and load-bearing.
 ///
 /// Returns a string and the estimated token count.
 pub fn describe_for_agent(db: &Database, opts: &DescribeOptions) -> Result<(String, usize)> {
@@ -116,6 +126,10 @@ pub fn describe_for_agent(db: &Database, opts: &DescribeOptions) -> Result<(Stri
     }
 }
 
+/// Maximum number of generated SELECT examples to attach per table when
+/// `DescribeOptions::include_examples` is enabled.
+const MAX_EXAMPLES_PER_TABLE: usize = 4;
+
 fn relevance(t: &Table, hint: &str) -> u32 {
     let name = t.qualified_name().to_lowercase();
     let mut score = 0u32;
@@ -132,24 +146,20 @@ fn relevance(t: &Table, hint: &str) -> u32 {
     score
 }
 
-/// `levels[0]` = include samples, `[1]` = include comments, `[2]` = include FKs,
-/// `[3]` = include columns past ordinal 8, `[4]` = include type info on extras.
+/// Truncation order: samples first (cheapest signal), then examples,
+/// comments, FKs, then long-tail columns.
+///
+/// `levels[0]` = include samples (cardinality / top values / sentinels)
+/// `levels[1]` = include few-shot examples
+/// `levels[2]` = include comments (incl. `-- CHECK …`)
+/// `levels[3]` = include FKs
+/// `levels[4]` = include columns past ordinal 8
 fn drop_one_level(levels: &mut [bool; 5], tables: &mut Vec<&Table>) -> bool {
-    if levels[0] {
-        levels[0] = false;
-        return true;
-    }
-    if levels[1] {
-        levels[1] = false;
-        return true;
-    }
-    if levels[2] {
-        levels[2] = false;
-        return true;
-    }
-    if levels[3] {
-        levels[3] = false;
-        return true;
+    for slot in levels.iter_mut() {
+        if *slot {
+            *slot = false;
+            return true;
+        }
     }
     if tables.len() > 1 {
         tables.pop();
@@ -160,9 +170,10 @@ fn drop_one_level(levels: &mut [bool; 5], tables: &mut Vec<&Table>) -> bool {
 
 fn render(tables: &[&Table], opts: &DescribeOptions, levels: &[bool; 5]) -> String {
     let include_samples = levels[0] && opts.include_samples;
-    let include_comments = levels[1];
-    let include_fks = levels[2] && opts.include_foreign_keys;
-    let include_extra_cols = levels[3];
+    let include_examples = levels[1] && opts.include_examples;
+    let include_comments = levels[2];
+    let include_fks = levels[3] && opts.include_foreign_keys;
+    let include_extra_cols = levels[4];
 
     let mut out = String::new();
     for t in tables {
@@ -180,9 +191,35 @@ fn render(tables: &[&Table], opts: &DescribeOptions, levels: &[bool; 5]) -> Stri
         for col in t.columns.iter().take(limit) {
             let null = if col.nullable { "" } else { " NOT NULL" };
             out.push_str(&format!("- {}: {}{}", col.name, col.native_type, null));
+            // UNIQUE / GENERATED annotations are cheap and load-bearing: a
+            // single token each, never dropped by the truncation hierarchy.
+            if col.is_unique {
+                out.push_str(" UNIQUE");
+            }
+            if let Some(expr) = &col.generation_expression {
+                out.push_str(&format!(" GENERATED AS ({expr})"));
+            }
+            if include_samples {
+                if let Some(sample) = &col.sample {
+                    if let Some(n) = sample.stats.distinct_count {
+                        out.push_str(&format!(" [n={n}]"));
+                    }
+                }
+            }
             if include_comments {
+                let mut trailing = String::new();
                 if let Some(c) = &col.comment {
-                    out.push_str(&format!(" -- {c}"));
+                    trailing.push_str(c);
+                }
+                if let Some(check) = &col.check_constraint {
+                    if !trailing.is_empty() {
+                        trailing.push_str("; ");
+                    }
+                    trailing.push_str("CHECK ");
+                    trailing.push_str(check);
+                }
+                if !trailing.is_empty() {
+                    out.push_str(&format!(" -- {trailing}"));
                 }
             }
             if include_samples {
@@ -213,6 +250,15 @@ fn render(tables: &[&Table], opts: &DescribeOptions, levels: &[bool; 5]) -> Stri
                 ));
             }
         }
+        if include_examples {
+            let examples = generate_examples(t, MAX_EXAMPLES_PER_TABLE);
+            if !examples.is_empty() {
+                out.push_str("Examples:\n");
+                for ex in &examples {
+                    out.push_str(&format!("- {ex}\n"));
+                }
+            }
+        }
         out.push('\n');
     }
     out
@@ -241,6 +287,9 @@ mod tests {
                     comment: None,
                     ordinal: 0,
                     sample: None,
+                    check_constraint: None,
+                    is_unique: false,
+                    generation_expression: None,
                 }],
                 primary_key: None,
                 foreign_keys: vec![],
@@ -290,6 +339,9 @@ mod tests {
                             comment: None,
                             ordinal: 0,
                             sample: None,
+                            check_constraint: None,
+                            is_unique: false,
+                            generation_expression: None,
                         },
                         Column {
                             name: "customer_id".to_string(),
@@ -300,6 +352,9 @@ mod tests {
                             comment: None,
                             ordinal: 1,
                             sample: None,
+                            check_constraint: None,
+                            is_unique: false,
+                            generation_expression: None,
                         },
                     ],
                     primary_key: None,
@@ -325,6 +380,9 @@ mod tests {
                         comment: None,
                         ordinal: 0,
                         sample: None,
+                        check_constraint: None,
+                        is_unique: false,
+                        generation_expression: None,
                     }],
                     primary_key: None,
                     foreign_keys: vec![],
@@ -350,6 +408,67 @@ mod tests {
         assert!(
             orders_pos < customers_pos,
             "orders should appear before customers due to FK companion boost:\n{text}"
+        );
+    }
+
+    #[test]
+    fn examples_render_when_enabled() {
+        // Sanity check: with include_examples=true we get the "Examples:"
+        // block and at least one generated SELECT for the single table.
+        // With it off (the default), the block must be absent.
+        let db = small_db();
+        let (with_examples, _) = describe_for_agent(
+            &db,
+            &DescribeOptions {
+                max_tokens: 1000,
+                include_examples: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(
+            with_examples.contains("Examples:"),
+            "examples block missing:\n{with_examples}"
+        );
+        assert!(
+            with_examples.contains("SELECT id FROM users"),
+            "expected PK scan in examples:\n{with_examples}"
+        );
+
+        let (without, _) = describe_for_agent(
+            &db,
+            &DescribeOptions {
+                max_tokens: 1000,
+                include_examples: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(
+            !without.contains("Examples:"),
+            "examples should be gated off by default:\n{without}"
+        );
+    }
+
+    #[test]
+    fn unique_and_check_render() {
+        // UNIQUE annotation lives on the type line; CHECK rides the comment
+        // pass and only renders when comments are on (default).
+        let mut db = small_db();
+        db.tables[0].columns[0].is_unique = true;
+        db.tables[0].columns[0].check_constraint = Some("id > 0".to_string());
+        let (text, _) = describe_for_agent(
+            &db,
+            &DescribeOptions {
+                max_tokens: 1000,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(text.contains("UNIQUE"), "UNIQUE annotation missing:\n{text}");
+        assert!(
+            text.contains("CHECK id > 0"),
+            "CHECK annotation missing:\n{text}"
         );
     }
 }

@@ -252,7 +252,7 @@ impl SchemaIntrospector for MysqlIntrospector {
         // otherwise by DATABASE() (the connection's default).
         let rows = match schema {
             Some(s) => sqlx::query(
-                "SELECT column_name, data_type, is_nullable, column_default, ordinal_position, column_comment \
+                "SELECT column_name, data_type, is_nullable, column_default, ordinal_position, column_comment, generation_expression \
                  FROM information_schema.columns \
                  WHERE table_schema = ? AND table_name = ? \
                  ORDER BY ordinal_position",
@@ -262,7 +262,7 @@ impl SchemaIntrospector for MysqlIntrospector {
             .fetch_all(&self.pool)
             .await?,
             None => sqlx::query(
-                "SELECT column_name, data_type, is_nullable, column_default, ordinal_position, column_comment \
+                "SELECT column_name, data_type, is_nullable, column_default, ordinal_position, column_comment, generation_expression \
                  FROM information_schema.columns \
                  WHERE table_schema = DATABASE() AND table_name = ? \
                  ORDER BY ordinal_position",
@@ -304,6 +304,15 @@ impl SchemaIntrospector for MysqlIntrospector {
                 .ok()
                 .flatten()
                 .filter(|s| !s.is_empty());
+            // MySQL exposes generation expressions and "extra" markers
+            // (e.g. "VIRTUAL GENERATED", "STORED GENERATED") on the columns
+            // row. We pull both so the agent can see them.
+            let generation_expression: Option<String> = r
+                .try_get::<Option<String>, _>("GENERATION_EXPRESSION")
+                .or_else(|_| r.try_get::<Option<String>, _>("generation_expression"))
+                .ok()
+                .flatten()
+                .filter(|s| !s.is_empty());
             cols.push(Column {
                 name,
                 data_type: classify_mysql(&native),
@@ -313,7 +322,55 @@ impl SchemaIntrospector for MysqlIntrospector {
                 comment,
                 ordinal: ordinal as i32,
                 sample: None,
+                check_constraint: None,
+                is_unique: false,
+                generation_expression,
             });
+        }
+
+        // UNIQUE detection: any single-column UNIQUE index in
+        // information_schema.statistics flags its column. Composite indexes
+        // don't propagate.
+        let stats_sql = match schema {
+            Some(_) => "SELECT s.INDEX_NAME, s.COLUMN_NAME, s.SEQ_IN_INDEX, s.NON_UNIQUE \
+                        FROM information_schema.statistics s \
+                        WHERE s.TABLE_SCHEMA = ? AND s.TABLE_NAME = ? \
+                          AND s.NON_UNIQUE = 0",
+            None => "SELECT s.INDEX_NAME, s.COLUMN_NAME, s.SEQ_IN_INDEX, s.NON_UNIQUE \
+                     FROM information_schema.statistics s \
+                     WHERE s.TABLE_SCHEMA = DATABASE() AND s.TABLE_NAME = ? \
+                       AND s.NON_UNIQUE = 0",
+        };
+        let mut stats_query = sqlx::query(stats_sql);
+        if let Some(s) = schema {
+            stats_query = stats_query.bind(s);
+        }
+        stats_query = stats_query.bind(table);
+        if let Ok(rows) = stats_query.fetch_all(&self.pool).await {
+            // Group by INDEX_NAME and only mark columns whose index has exactly
+            // one member.
+            use std::collections::BTreeMap;
+            let mut by_idx: BTreeMap<String, Vec<String>> = BTreeMap::new();
+            for r in rows {
+                let idx_name: String = r
+                    .try_get("INDEX_NAME")
+                    .or_else(|_| r.try_get("index_name"))
+                    .unwrap_or_default();
+                let col_name: String = r
+                    .try_get("COLUMN_NAME")
+                    .or_else(|_| r.try_get("column_name"))
+                    .unwrap_or_default();
+                if !idx_name.is_empty() && !col_name.is_empty() {
+                    by_idx.entry(idx_name).or_default().push(col_name);
+                }
+            }
+            for (_idx, members) in by_idx {
+                if members.len() == 1 {
+                    if let Some(c) = cols.iter_mut().find(|c| c.name == members[0]) {
+                        c.is_unique = true;
+                    }
+                }
+            }
         }
 
         if let Some(policy) = self.sampling.as_ref() {

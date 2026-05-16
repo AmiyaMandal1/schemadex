@@ -261,6 +261,12 @@ impl SchemaIntrospector for DuckDbIntrospector {
                     comment: None,
                     ordinal: ord,
                     sample: None,
+                    // TODO: DuckDB exposes constraints in information_schema
+                    // but the bindings aren't wired up for v1 — leave the
+                    // three constraint-aware fields unpopulated for now.
+                    check_constraint: None,
+                    is_unique: false,
+                    generation_expression: None,
                 })
                 .collect())
         })

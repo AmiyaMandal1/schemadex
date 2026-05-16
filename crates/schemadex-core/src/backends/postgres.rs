@@ -37,6 +37,124 @@ impl PostgresIntrospector {
         s.unwrap_or(self.default_schema.as_str())
     }
 
+    /// Populate `is_unique`, `check_constraint`, and `generation_expression`
+    /// on the supplied columns. Each lookup is independent — a single
+    /// failing query (e.g. lacking `pg_get_expr` privilege) only loses that
+    /// dimension; the others still populate.
+    async fn enrich_constraints(
+        &self,
+        schema: &str,
+        table: &str,
+        cols: &mut [Column],
+    ) -> Result<()> {
+        // 1) UNIQUE — either UNIQUE constraints or single-column UNIQUE indexes.
+        // We treat *any* unique key that touches a column (alone) as making
+        // that column unique. Composite unique keys do NOT mark their members
+        // unique on their own.
+        let uniq_sql = "SELECT a.attname AS column_name \
+                        FROM pg_constraint c \
+                        JOIN pg_class t ON t.oid = c.conrelid \
+                        JOIN pg_namespace n ON n.oid = t.relnamespace \
+                        JOIN unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord) ON TRUE \
+                        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum \
+                        WHERE c.contype = 'u' AND n.nspname = $1 AND t.relname = $2 \
+                          AND array_length(c.conkey, 1) = 1";
+        if let Ok(rows) = sqlx::query(uniq_sql)
+            .bind(schema)
+            .bind(table)
+            .fetch_all(&self.pool)
+            .await
+        {
+            for r in rows {
+                if let Ok(name) = r.try_get::<String, _>("column_name") {
+                    if let Some(c) = cols.iter_mut().find(|c| c.name == name) {
+                        c.is_unique = true;
+                    }
+                }
+            }
+        }
+        // Single-column UNIQUE indexes (covers UNIQUE INDEX as well as
+        // implicit-unique-on-PK columns, which we still mark; PKs are unique).
+        let uniq_idx_sql = "SELECT a.attname AS column_name \
+                            FROM pg_index ix \
+                            JOIN pg_class t ON t.oid = ix.indrelid \
+                            JOIN pg_namespace n ON n.oid = t.relnamespace \
+                            JOIN pg_attribute a ON a.attrelid = t.oid \
+                             AND a.attnum = ANY(ix.indkey) \
+                            WHERE ix.indisunique = true \
+                              AND n.nspname = $1 AND t.relname = $2 \
+                              AND array_length(ix.indkey, 1) = 1";
+        if let Ok(rows) = sqlx::query(uniq_idx_sql)
+            .bind(schema)
+            .bind(table)
+            .fetch_all(&self.pool)
+            .await
+        {
+            for r in rows {
+                if let Ok(name) = r.try_get::<String, _>("column_name") {
+                    if let Some(c) = cols.iter_mut().find(|c| c.name == name) {
+                        c.is_unique = true;
+                    }
+                }
+            }
+        }
+
+        // 2) CHECK constraints — only attach those that reference exactly
+        // one column. Multi-column checks would be misleading on a per-column
+        // line.
+        let check_sql = "SELECT a.attname AS column_name, \
+                                pg_get_expr(c.conbin, c.conrelid) AS expr \
+                         FROM pg_constraint c \
+                         JOIN pg_class t ON t.oid = c.conrelid \
+                         JOIN pg_namespace n ON n.oid = t.relnamespace \
+                         JOIN unnest(c.conkey) AS k(attnum) ON TRUE \
+                         JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum \
+                         WHERE c.contype = 'c' AND n.nspname = $1 AND t.relname = $2 \
+                           AND array_length(c.conkey, 1) = 1";
+        if let Ok(rows) = sqlx::query(check_sql)
+            .bind(schema)
+            .bind(table)
+            .fetch_all(&self.pool)
+            .await
+        {
+            for r in rows {
+                let name: Option<String> = r.try_get("column_name").ok();
+                let expr: Option<String> = r.try_get("expr").ok();
+                if let (Some(name), Some(expr)) = (name, expr) {
+                    if let Some(c) = cols.iter_mut().find(|c| c.name == name) {
+                        c.check_constraint = Some(expr);
+                    }
+                }
+            }
+        }
+
+        // 3) Generated columns. `is_generated = 'ALWAYS'` lives in
+        // information_schema.columns alongside the expression.
+        let gen_sql = "SELECT column_name, generation_expression \
+                       FROM information_schema.columns \
+                       WHERE table_schema = $1 AND table_name = $2 \
+                         AND is_generated = 'ALWAYS'";
+        if let Ok(rows) = sqlx::query(gen_sql)
+            .bind(schema)
+            .bind(table)
+            .fetch_all(&self.pool)
+            .await
+        {
+            for r in rows {
+                let name: Option<String> = r.try_get("column_name").ok();
+                let expr: Option<String> = r.try_get("generation_expression").ok();
+                if let (Some(name), Some(expr)) = (name, expr) {
+                    if !expr.is_empty() {
+                        if let Some(c) = cols.iter_mut().find(|c| c.name == name) {
+                            c.generation_expression = Some(expr);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     async fn sample_column(
         &self,
         schema: &str,
@@ -229,7 +347,17 @@ impl SchemaIntrospector for PostgresIntrospector {
                 comment: None,
                 ordinal,
                 sample: None,
+                check_constraint: None,
+                is_unique: false,
+                generation_expression: None,
             });
+        }
+
+        // Enrich with constraint-aware metadata: UNIQUE flags, CHECK
+        // expressions, and generation expressions. Each query is best-effort;
+        // a failure on the metadata side should not break the columns() call.
+        if let Err(e) = self.enrich_constraints(&schema, table, &mut cols).await {
+            tracing::debug!(error = %e, schema = %schema, table = %table, "postgres.columns.enrich_failed");
         }
 
         if let Some(policy) = self.sampling.as_ref() {
