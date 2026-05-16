@@ -2,12 +2,12 @@
 //! so it works on any Postgres ≥ 12.
 
 use crate::error::Result;
-use crate::introspector::{Backend, SchemaIntrospector};
+use crate::introspector::{Backend, QueryResult, QueryRunner, SchemaIntrospector};
 use crate::model::{Column, DataType, ForeignKey, PrimaryKey};
 use crate::sampling::{categorical_sample, numeric_sample, SamplingPolicy};
 use async_trait::async_trait;
 use sqlx::postgres::{PgPool, PgPoolOptions};
-use sqlx::Row;
+use sqlx::{Column as _, Row, TypeInfo, ValueRef};
 
 pub struct PostgresIntrospector {
     pool: PgPool,
@@ -326,5 +326,78 @@ impl SchemaIntrospector for PostgresIntrospector {
         Ok(row
             .and_then(|r| r.try_get::<Option<String>, _>("d").ok())
             .flatten())
+    }
+}
+
+/// Render a postgres cell as a string. Tries text-first then falls back to
+/// typed reads for the common scalar types. Anything we can't classify becomes
+/// `<unsupported: <type>>` rather than panicking — agents handle that better
+/// than a 500.
+fn pg_cell_to_string(row: &sqlx::postgres::PgRow, idx: usize) -> String {
+    let raw = match row.try_get_raw(idx) {
+        Ok(r) => r,
+        Err(_) => return String::new(),
+    };
+    if raw.is_null() {
+        return String::new();
+    }
+    let type_name = raw.type_info().name().to_string();
+
+    // Fast path: most builtins decode straight to a string via the TEXT codec.
+    if let Ok(s) = row.try_get::<String, _>(idx) {
+        return s;
+    }
+
+    match type_name.as_str() {
+        "INT2" | "INT4" => row
+            .try_get::<i32, _>(idx)
+            .map(|v| v.to_string())
+            .unwrap_or_default(),
+        "INT8" => row
+            .try_get::<i64, _>(idx)
+            .map(|v| v.to_string())
+            .unwrap_or_default(),
+        "FLOAT4" => row
+            .try_get::<f32, _>(idx)
+            .map(|v| v.to_string())
+            .unwrap_or_default(),
+        "FLOAT8" => row
+            .try_get::<f64, _>(idx)
+            .map(|v| v.to_string())
+            .unwrap_or_default(),
+        "BOOL" => row
+            .try_get::<bool, _>(idx)
+            .map(|v| v.to_string())
+            .unwrap_or_default(),
+        other => format!("<unsupported: {other}>"),
+    }
+}
+
+#[async_trait]
+impl QueryRunner for PostgresIntrospector {
+    async fn run_sql(&self, sql: &str, row_limit: usize) -> Result<QueryResult> {
+        let rows = sqlx::query(sql).fetch_all(&self.pool).await?;
+        let truncated = rows.len() > row_limit;
+        let take = rows.len().min(row_limit);
+
+        let columns: Vec<String> = rows
+            .first()
+            .map(|r| r.columns().iter().map(|c| c.name().to_string()).collect())
+            .unwrap_or_default();
+
+        let mut out_rows = Vec::with_capacity(take);
+        for r in rows.iter().take(take) {
+            let mut row = Vec::with_capacity(columns.len());
+            for i in 0..r.columns().len() {
+                row.push(pg_cell_to_string(r, i));
+            }
+            out_rows.push(row);
+        }
+
+        Ok(QueryResult {
+            columns,
+            rows: out_rows,
+            truncated,
+        })
     }
 }

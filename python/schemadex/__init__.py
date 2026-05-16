@@ -14,12 +14,14 @@ Public API:
 from __future__ import annotations
 
 from ._native import ResolveResult, SchemaCache, __version__
+from .embedding_resolve import resolve_with_embedding
 
 __all__ = [
     "SchemaCache",
     "ResolveResult",
     "describe_for_agent",
     "resolve",
+    "resolve_with_embedding",
     "__version__",
 ]
 

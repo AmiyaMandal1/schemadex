@@ -2,11 +2,11 @@
 //! databases — we ignore attachments by default).
 
 use crate::error::Result;
-use crate::introspector::{Backend, SchemaIntrospector};
+use crate::introspector::{Backend, QueryResult, QueryRunner, SchemaIntrospector};
 use crate::model::{Column, DataType, ForeignKey, PrimaryKey};
 use async_trait::async_trait;
 use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
-use sqlx::Row;
+use sqlx::{Column as _, Row, TypeInfo, ValueRef};
 
 pub struct SqliteIntrospector {
     pool: SqlitePool,
@@ -131,5 +131,74 @@ impl SchemaIntrospector for SqliteIntrospector {
             fk.referenced_columns.push(to);
         }
         Ok(by_id.into_values().collect())
+    }
+}
+
+/// Render a sqlite cell as a string. The driver returns typed values so we
+/// peek at the type and coerce. NULL becomes the empty string — the agent
+/// reads markdown, not three-valued logic.
+fn sqlite_cell_to_string(row: &sqlx::sqlite::SqliteRow, idx: usize) -> String {
+    let raw = match row.try_get_raw(idx) {
+        Ok(r) => r,
+        Err(_) => return String::new(),
+    };
+    if raw.is_null() {
+        return String::new();
+    }
+    let type_name = raw.type_info().name().to_ascii_uppercase();
+    match type_name.as_str() {
+        "INTEGER" | "INT" | "BIGINT" => row
+            .try_get::<i64, _>(idx)
+            .map(|v| v.to_string())
+            .unwrap_or_default(),
+        "REAL" | "FLOAT" | "DOUBLE" | "NUMERIC" => row
+            .try_get::<f64, _>(idx)
+            .map(|v| v.to_string())
+            .unwrap_or_default(),
+        "BOOLEAN" => row
+            .try_get::<bool, _>(idx)
+            .map(|v| v.to_string())
+            .unwrap_or_default(),
+        "BLOB" => row
+            .try_get::<Vec<u8>, _>(idx)
+            .map(|v| format!("<{} bytes>", v.len()))
+            .unwrap_or_default(),
+        // TEXT and the catch-all "NULL" sqlite type (when the column has no
+        // affinity and the value was bound as text).
+        _ => row.try_get::<String, _>(idx).unwrap_or_default(),
+    }
+}
+
+#[async_trait]
+impl QueryRunner for SqliteIntrospector {
+    async fn run_sql(&self, sql: &str, row_limit: usize) -> Result<QueryResult> {
+        // Fetch one extra row so we can flag truncation without a second
+        // round-trip. We don't try to wrap the user's SQL in a subquery —
+        // sqlite isn't going to materialize a billion rows behind a LIMIT we
+        // tacked on, and rewriting arbitrary SELECT statements is fragile.
+        let cap = row_limit.saturating_add(1);
+        let rows = sqlx::query(sql).fetch_all(&self.pool).await?;
+        let truncated = rows.len() > row_limit;
+        let take = rows.len().min(row_limit).min(cap);
+
+        let columns: Vec<String> = rows
+            .first()
+            .map(|r| r.columns().iter().map(|c| c.name().to_string()).collect())
+            .unwrap_or_default();
+
+        let mut out_rows = Vec::with_capacity(take);
+        for r in rows.iter().take(take) {
+            let mut row = Vec::with_capacity(columns.len());
+            for i in 0..r.columns().len() {
+                row.push(sqlite_cell_to_string(r, i));
+            }
+            out_rows.push(row);
+        }
+
+        Ok(QueryResult {
+            columns,
+            rows: out_rows,
+            truncated,
+        })
     }
 }

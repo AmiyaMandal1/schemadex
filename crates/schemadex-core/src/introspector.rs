@@ -2,6 +2,29 @@ use crate::error::Result;
 use crate::model::{Column, ForeignKey, PrimaryKey, Table};
 use async_trait::async_trait;
 
+/// Result of executing a SELECT through a [`QueryRunner`].
+///
+/// Every cell is stringified — this is an agent-ergonomic API meant to feed
+/// LLM prompts, not an OLAP path. The `truncated` flag is set by the runner
+/// when it detected at least one more row beyond `row_limit` (it fetches
+/// `row_limit + 1` and trims).
+#[derive(Debug, Clone)]
+pub struct QueryResult {
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<String>>,
+    pub truncated: bool,
+}
+
+/// Execute ad-hoc SELECTs against a live backend. Implementations live
+/// alongside the matching [`SchemaIntrospector`] so a single connection pool
+/// powers both schema introspection and result fetching.
+#[async_trait]
+pub trait QueryRunner: Send + Sync {
+    /// Execute `sql` and return up to `row_limit` rows as a homogeneous
+    /// table of strings (one row per inner `Vec`).
+    async fn run_sql(&self, sql: &str, row_limit: usize) -> Result<QueryResult>;
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Backend {
     Postgres,

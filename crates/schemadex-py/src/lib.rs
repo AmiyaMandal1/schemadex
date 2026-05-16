@@ -298,6 +298,29 @@ impl PySchemaCache {
             .map_err(map_err)?;
         Ok((report.changed, report.unchanged))
     }
+
+    /// Execute a SELECT through a fresh connection to `url` and return a
+    /// markdown-rendered result table that fits inside ``token_budget``.
+    ///
+    /// Returns ``(rendered_table, token_count)``. Rows are dropped from the
+    /// bottom until the rendered table fits; if anything was dropped, a
+    /// ``_(truncated to N rows)_`` marker is appended.
+    ///
+    /// DuckDB URLs are not supported yet — the QueryRunner trait isn't wired
+    /// up for the synchronous duckdb backend.
+    #[pyo3(signature = (url, sql, token_budget=1024))]
+    fn run_sql(&self, url: &str, sql: &str, token_budget: usize) -> PyResult<(String, usize)> {
+        let url = url.to_string();
+        let sql = sql.to_string();
+        let inner = Arc::clone(&self.inner);
+        rt()
+            .block_on(async move {
+                let runner = backends::connect_runner(&url).await?;
+                let guard = inner.lock().expect("poisoned");
+                guard.run_sql(&*runner, &sql, token_budget).await
+            })
+            .map_err(map_err)
+    }
 }
 
 fn json_to_py<'py>(py: Python<'py>, v: &serde_json::Value) -> PyResult<Bound<'py, PyAny>> {

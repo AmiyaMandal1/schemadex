@@ -53,3 +53,9 @@ class SchemaCache:
         sample_sentinel_threshold: float | None = None,
         sample_rows: int | None = None,
     ) -> tuple[list[str], list[str]]: ...
+    def run_sql(
+        self,
+        url: str,
+        sql: str,
+        token_budget: int = 1024,
+    ) -> tuple[str, int]: ...
