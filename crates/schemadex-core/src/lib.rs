@@ -10,23 +10,29 @@ pub mod agent;
 pub mod cache;
 pub mod error;
 pub mod fingerprint;
+pub mod hint;
 pub mod introspector;
 pub mod model;
 pub mod resolve;
 pub mod safety;
 pub mod sampling;
+pub mod synonyms;
+pub mod validate;
 
 pub mod backends;
 
 pub use crate::agent::{describe_for_agent, DescribeOptions};
 pub use crate::cache::SchemaCache;
 pub use crate::error::{Result, SchemadexError};
+pub use crate::hint::{hint_for_error, ErrorHint, HintKind};
 pub use crate::introspector::{Backend, QueryResult, QueryRunner, SchemaIntrospector};
 pub use crate::model::{
     Column, ColumnSample, DataType, Database, ForeignKey, PrimaryKey, SampleStats, Table,
 };
 pub use crate::resolve::{resolve_column, ResolveResult};
 pub use crate::safety::assert_readonly;
+pub use crate::synonyms::{resolve_column_with_synonyms, SynonymEntry, SynonymMap};
+pub use crate::validate::{validate_sql, IssueKind, ValidationIssue};
 
 /// Render a markdown-style table from a [`QueryResult`] and trim it to fit
 /// `token_budget`. Returns the rendered string and the final token count.
@@ -189,5 +195,68 @@ impl SchemaCache {
             "schema_cache.run_sql.fetched"
         );
         render_table_for_agent(&result, token_budget)
+    }
+
+    /// Like [`SchemaCache::run_sql`] but runs [`validate::validate_sql`]
+    /// against the cached schema *before* executing. If the validator finds
+    /// any unknown table or column references, returns
+    /// [`SchemadexError::Other`] with a structured, agent-readable message
+    /// listing every issue and the closest cached identifier.
+    ///
+    /// This is an *optional* sibling of `run_sql`. The default
+    /// [`SchemaCache::run_sql`] retains its current behavior (read-only
+    /// guard only) so existing callers don't have to change.
+    #[tracing::instrument(
+        level = "info",
+        name = "schema_cache.run_sql_validated",
+        skip(self, runner, sql),
+        fields(
+            sql_len = sql.len(),
+            token_budget,
+        ),
+    )]
+    pub async fn run_sql_validated<R: QueryRunner + ?Sized>(
+        &self,
+        runner: &R,
+        sql: &str,
+        token_budget: usize,
+    ) -> Result<(String, usize)> {
+        safety::assert_readonly(sql)?;
+        let issues = validate::validate_sql(self.database(), sql);
+        if !issues.is_empty() {
+            let payload = serde_json::to_string(&issues)
+                .unwrap_or_else(|_| "[]".to_string());
+            let human = issues
+                .iter()
+                .map(format_issue_human)
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Err(SchemadexError::Other(format!(
+                "schemadex pre-validation flagged {} issue(s): {} (details: {})",
+                issues.len(),
+                human,
+                payload
+            )));
+        }
+        self.run_sql_unchecked(runner, sql, token_budget).await
+    }
+}
+
+fn format_issue_human(issue: &validate::ValidationIssue) -> String {
+    use validate::IssueKind;
+    let suffix = match &issue.suggestion {
+        Some(s) => format!(" — did you mean '{s}'?"),
+        None => String::new(),
+    };
+    match &issue.kind {
+        IssueKind::UnknownTable => {
+            format!("unknown table '{}'{}", issue.identifier, suffix)
+        }
+        IssueKind::UnknownColumn { table } => {
+            format!(
+                "unknown column '{}' on table '{}'{}",
+                issue.identifier, table, suffix
+            )
+        }
     }
 }

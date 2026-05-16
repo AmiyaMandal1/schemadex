@@ -10,9 +10,11 @@ use pyo3::IntoPy;
 
 use schemadex_core::{
     backends, cache::CacheOptions, describe_for_agent as core_describe,
-    resolve_column as core_resolve, sampling::SamplingPolicy, DescribeOptions, ResolveResult,
-    SchemaCache as CoreCache, SchemadexError,
+    hint_for_error as core_hint_for_error, resolve_column as core_resolve,
+    resolve_column_with_synonyms, sampling::SamplingPolicy, validate_sql as core_validate_sql,
+    DescribeOptions, ResolveResult, SchemaCache as CoreCache, SchemadexError, SynonymMap,
 };
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -101,6 +103,44 @@ impl From<ResolveResult> for PyResolveResult {
 #[pyclass(name = "SchemaCache", module = "schemadex")]
 struct PySchemaCache {
     inner: Arc<Mutex<CoreCache>>,
+    /// Cached parsed synonym map. Keyed by the path the user supplied; we
+    /// reload if the path changes between calls. `None` once means we
+    /// haven't loaded any synonyms yet on this cache.
+    synonyms: Arc<Mutex<Option<LoadedSynonyms>>>,
+}
+
+#[derive(Clone)]
+struct LoadedSynonyms {
+    path: PathBuf,
+    map: SynonymMap,
+}
+
+impl PySchemaCache {
+    fn new(cache: CoreCache) -> Self {
+        PySchemaCache {
+            inner: Arc::new(Mutex::new(cache)),
+            synonyms: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Load synonyms from `path`, reusing the cached map if `path` matches the
+    /// previously-loaded path. Returns a clone of the map for use by the
+    /// caller.
+    fn synonyms_for_path(&self, path: &str) -> PyResult<SynonymMap> {
+        let path = PathBuf::from(path);
+        let mut guard = self.synonyms.lock().expect("poisoned");
+        if let Some(loaded) = guard.as_ref() {
+            if loaded.path == path {
+                return Ok(loaded.map.clone());
+            }
+        }
+        let map = SynonymMap::load_yaml(&path).map_err(map_err)?;
+        *guard = Some(LoadedSynonyms {
+            path,
+            map: map.clone(),
+        });
+        Ok(map)
+    }
 }
 
 #[pymethods]
@@ -153,9 +193,7 @@ impl PySchemaCache {
                 CoreCache::from_introspector(&*introspector, &url, &opts).await
             })
             .map_err(map_err)?;
-        Ok(PySchemaCache {
-            inner: Arc::new(Mutex::new(cache)),
-        })
+        Ok(PySchemaCache::new(cache))
     }
 
     /// Load a previously persisted cache from disk without contacting the DB.
@@ -170,9 +208,7 @@ impl PySchemaCache {
         let cache = rt()
             .block_on(async move { CoreCache::load(&url, &opts).await })
             .map_err(map_err)?;
-        Ok(cache.map(|c| PySchemaCache {
-            inner: Arc::new(Mutex::new(c)),
-        }))
+        Ok(cache.map(PySchemaCache::new))
     }
 
     fn list_tables(&self) -> Vec<String> {
@@ -191,13 +227,40 @@ impl PySchemaCache {
         Ok(Some(dict.downcast_into::<PyDict>()?))
     }
 
-    fn resolve(&self, table: &str, candidate: &str) -> PyResult<PyResolveResult> {
+    /// Fuzzy-resolve `candidate` to a column on `table`. When
+    /// `synonyms_path` is supplied, the YAML at that path is consulted before
+    /// the lexical fallback. The parsed synonym map is cached on this
+    /// :class:`SchemaCache` instance; subsequent calls with the same path
+    /// reuse the cached map.
+    #[pyo3(signature = (table, candidate, synonyms_path=None))]
+    fn resolve(
+        &self,
+        table: &str,
+        candidate: &str,
+        synonyms_path: Option<String>,
+    ) -> PyResult<PyResolveResult> {
+        // Load synonyms first (outside the cache lock — file IO).
+        let synonyms = match synonyms_path {
+            Some(p) => Some(self.synonyms_for_path(&p)?),
+            None => None,
+        };
         let guard = self.inner.lock().expect("poisoned");
         let t = guard
             .database()
             .table(table)
             .ok_or_else(|| PyRuntimeError::new_err(format!("table not found: {table}")))?;
-        Ok(core_resolve(t, candidate).into())
+        let result = match synonyms.as_ref() {
+            Some(map) => resolve_column_with_synonyms(t, candidate, map),
+            None => core_resolve(t, candidate),
+        };
+        Ok(result.into())
+    }
+
+    /// Pre-load a synonyms YAML file into this cache. Subsequent calls to
+    /// :meth:`resolve` with the same `path` will reuse the parsed map. Raises
+    /// :class:`RuntimeError` if the file is missing or malformed.
+    fn load_synonyms(&self, path: &str) -> PyResult<()> {
+        self.synonyms_for_path(path).map(|_| ())
     }
 
     #[pyo3(signature = (max_tokens=2048, hint=None, tables=None, include_samples=true, include_foreign_keys=true))]
@@ -365,6 +428,104 @@ impl PySchemaCache {
             })
             .map_err(map_err)
     }
+
+    /// Pre-validate a SQL query against the cached schema. Returns a list of
+    /// issue dicts; an empty list means the query references only known
+    /// tables and columns (per the heuristic — it is not a full SQL parser).
+    ///
+    /// Each dict looks like::
+    ///
+    ///     {
+    ///         "kind": "unknown_table" | "unknown_column",
+    ///         "identifier": str,
+    ///         "table": str | None,         # only present for unknown_column
+    ///         "suggestion": str | None,
+    ///         "confidence": float | None,
+    ///     }
+    fn validate_sql<'py>(
+        &self,
+        py: Python<'py>,
+        sql: &str,
+    ) -> PyResult<Bound<'py, PyList>> {
+        let guard = self.inner.lock().expect("poisoned");
+        let issues = core_validate_sql(guard.database(), sql);
+        let list = PyList::empty_bound(py);
+        for issue in issues {
+            let d = PyDict::new_bound(py);
+            match &issue.kind {
+                schemadex_core::IssueKind::UnknownTable => {
+                    d.set_item("kind", "unknown_table")?;
+                }
+                schemadex_core::IssueKind::UnknownColumn { table } => {
+                    d.set_item("kind", "unknown_column")?;
+                    d.set_item("table", table.as_str())?;
+                }
+            }
+            d.set_item("identifier", issue.identifier)?;
+            match issue.suggestion {
+                Some(s) => d.set_item("suggestion", s)?,
+                None => d.set_item("suggestion", py.None())?,
+            }
+            match issue.confidence {
+                Some(c) => d.set_item("confidence", c)?,
+                None => d.set_item("confidence", py.None())?,
+            }
+            list.append(d)?;
+        }
+        Ok(list)
+    }
+
+    /// Try to turn a raw database error message into a structured hint
+    /// pointing at the likely-real identifier. Returns ``None`` if no known
+    /// error pattern matched.
+    ///
+    /// The returned dict looks like::
+    ///
+    ///     {
+    ///         "kind": "unknown_column" | "unknown_table" | "ambiguous_column",
+    ///         "table": str | None,                 # only for unknown_column
+    ///         "original_identifier": str,
+    ///         "suggested_identifier": str | None,
+    ///         "confidence": float | None,
+    ///         "human_message": str,
+    ///     }
+    fn hint_for_error<'py>(
+        &self,
+        py: Python<'py>,
+        error_message: &str,
+    ) -> PyResult<Option<Bound<'py, PyDict>>> {
+        let guard = self.inner.lock().expect("poisoned");
+        let Some(hint) = core_hint_for_error(guard.database(), error_message) else {
+            return Ok(None);
+        };
+        let d = PyDict::new_bound(py);
+        match &hint.kind {
+            schemadex_core::HintKind::UnknownColumn { table } => {
+                d.set_item("kind", "unknown_column")?;
+                match table {
+                    Some(t) => d.set_item("table", t.as_str())?,
+                    None => d.set_item("table", py.None())?,
+                }
+            }
+            schemadex_core::HintKind::UnknownTable => {
+                d.set_item("kind", "unknown_table")?;
+            }
+            schemadex_core::HintKind::AmbiguousColumn => {
+                d.set_item("kind", "ambiguous_column")?;
+            }
+        }
+        d.set_item("original_identifier", hint.original_identifier)?;
+        match hint.suggested_identifier {
+            Some(s) => d.set_item("suggested_identifier", s)?,
+            None => d.set_item("suggested_identifier", py.None())?,
+        }
+        match hint.confidence {
+            Some(c) => d.set_item("confidence", c)?,
+            None => d.set_item("confidence", py.None())?,
+        }
+        d.set_item("human_message", hint.human_message)?;
+        Ok(Some(d))
+    }
 }
 
 fn json_to_py<'py>(py: Python<'py>, v: &serde_json::Value) -> PyResult<Bound<'py, PyAny>> {
@@ -461,9 +622,7 @@ fn from_url_async<'py>(
         }
         .await
         .map_err(map_err)?;
-        Ok(PySchemaCache {
-            inner: Arc::new(Mutex::new(cache)),
-        })
+        Ok(PySchemaCache::new(cache))
     })
 }
 

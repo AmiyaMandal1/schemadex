@@ -25,6 +25,7 @@ mssql = ["dep:tiberius", "dep:tokio-util", "tokio/net"]
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+serde_yaml.workspace = true
 tokio.workspace = true
 thiserror.workspace = true
 anyhow.workspace = true
@@ -39,6 +40,7 @@ sqlx = { workspace = true, optional = true }
 duckdb = { workspace = true, optional = true }
 strsim.workspace = true
 tiktoken-rs.workspace = true
+regex.workspace = true
 tiberius = { version = "0.12", default-features = false, features = ["tds73", "rustls"], optional = true }
 tokio-util = { version = "0.7", features = ["compat"], optional = true }
 gcp-bigquery-client = { version = "0.28", default-features = false, features = ["rust-tls", "ring"], optional = true }
