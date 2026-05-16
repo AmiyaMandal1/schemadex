@@ -206,12 +206,12 @@ The list below assumes 0.1.x ships and a few people try it. Items are ordered by
 - [x] **MSSQL** scaffold landed — same shape (commit `0947198`).
 
 ### Observability, safety, distribution (chip away in parallel)
-- [ ] **`tracing` spans** around every backend call, with a `schemadex=info` env-filter recipe documented.
-- [ ] **Sample-value redaction policy.** Default: skip columns matching `email`, `phone`, `ssn`, anything pg-marked `personally_identifiable`. Opt-in override for trusted databases.
-- [ ] **PEP 740 trusted publishing.** Replace the `PYPI_API_TOKEN` GitHub secret with OIDC. Removes the long-lived token blast radius.
-- [ ] **Slim per-backend wheels.** Today the default wheel bundles `postgres + sqlite + duckdb_backend`, which puts DuckDB at ~20 MB. Ship `schemadex` (slim), `schemadex[postgres]`, `schemadex[sqlite]`, `schemadex[duckdb]` extras.
-- [ ] **`cargo deny` clean.** Two advisories (`PyString::from_object` buffer-overflow note in pyo3) + license rejection still trip `cargo deny`. Currently the CI job is non-blocking; tighten when fixes are upstream.
-- [ ] **mkdocs site** at `schemadex.dev` (or GitHub Pages). Rustdoc for `schemadex-core` cross-linked from the Python docs.
+- [x] **`tracing` spans** on cache + every backend method; `RUST_LOG=schemadex=info,sqlx=warn` recipe documented (commit `a64633d`).
+- [x] **Sample-value redaction policy.** `RedactionPolicy::default_pii()` enabled by default on `SamplingPolicy::default_policy` (commit `a64633d`).
+- [x] **PEP 740 trusted publishing.** CI switched to `uv publish --trusted-publishing always`; maintainer runbook in `docs/release.md` (commit `a64633d`).
+- [x] **Slim per-backend wheels.** `slim` + `full` features on `schemadex-py`; recipes in `docs/slim-wheels.md` (commit `a64633d`).
+- [x] **`cargo deny` clean.** Ignored RUSTSEC-2025-0020 + RUSTSEC-2023-0071 with rationale, allow-listed CDLA-Permissive-2.0; deny job now hard-gates (commit `a64633d`).
+- [x] **mkdocs site.** `mkdocs.yml` + Material theme + `.github/workflows/docs.yml` auto-deploy to GitHub Pages on push (commit `a64633d`).
 
 ### Stretch / research-mode (no commitment)
 - [ ] **Query-plan-aware ranking.** When the question hints at a JOIN, weight tables that participate in matching FKs higher in `describe_for_agent`.
