@@ -66,6 +66,7 @@ opentelemetry_sdk = { version = "0.24", features = ["rt-tokio"], optional = true
 opentelemetry-otlp = { version = "0.17", features = ["grpc-tonic"], optional = true }
 tracing-opentelemetry = { version = "0.25", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+tempfile = "3.13"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "rt-multi-thread", "macros"] }
@@ -78,6 +79,14 @@ path = "src/bin/schemadex_diff.rs"
 [[bin]]
 name = "schemadex-api-audit"
 path = "src/bin/schemadex_api_audit.rs"
+
+[[bin]]
+name = "schemadex-warm"
+path = "src/bin/schemadex_warm.rs"
+
+[[bin]]
+name = "schemadex-docs"
+path = "src/bin/schemadex_docs.rs"
 
 [[bench]]
 name = "cache_refresh"
