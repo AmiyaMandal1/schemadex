@@ -3,9 +3,9 @@
 ## Pre-flight checklist (before M0)
 
 **Naming & namespace**
-- [ ] Verify `schemadex` available on PyPI (`pip search` is dead — use https://pypi.org/project/schemadex/)
+- [x] Verify `schemadex` available on PyPI (`pip search` is dead — use https://pypi.org/project/schemadex/) *(was 404 → now claimed by us; 0.1.0 + 0.1.1 live.)*
 - [x] Verify `schemadex` available as GitHub repo + create empty repo with README stub
-- [ ] Verify on crates.io directly (search confirmed clear, but `cargo publish --dry-run` is the real check)
+- [x] Verify on crates.io directly (search confirmed clear, but `cargo publish --dry-run` is the real check) *(HTTP 404 on both `schemadex` and `schemadex-core`; `cargo publish --dry-run -p schemadex-core` packaged + verified cleanly.)*
 - [ ] Reserve `@schemadex` on Twitter/X if you plan to announce there
 - [x] Decide tagline (one line): *"Schema introspection and resolution toolkit for SQL agents"*
 
@@ -54,11 +54,11 @@ Milestone-anchored, not date-anchored, since your capacity is variable. Each mil
 
 Deliverables:
 - [x] Workspace builds end-to-end
-- [ ] Empty wheel publishes to TestPyPI via CI
-- [ ] Empty crate publishes to crates.io as a placeholder version (claims the name)
+- [x] Empty wheel publishes to TestPyPI via CI *(superseded — real `v0.1.0` wheels already on PyPI; TestPyPI rc workflow stays available in `release.yml` for future pre-releases.)*
+- [ ] Empty crate publishes to crates.io as a placeholder version (claims the name) *(blocked on `CARGO_REGISTRY_TOKEN`; name still unclaimed per HTTP 404 + dry-run packaging clean.)*
 - [x] README has the pitch, install command (even if it errors at runtime), and roadmap link
 
-Done when: someone can `pip install -i https://test.pypi.org/simple/ schemadex` and `import schemadex` without an ImportError.
+Done when: someone can `pip install -i https://test.pypi.org/simple/ schemadex` and `import schemadex` without an ImportError. ✅ — superseded by real PyPI publish: `pip install schemadex` is already live.
 
 ---
 
@@ -70,7 +70,7 @@ Deliverables:
 - [x] Postgres implementation via `sqlx`
 - [x] Data model: `Database`, `Table`, `Column`, `ForeignKey` with serde + PyO3
 - [x] Python API: `SchemaCache.from_url(url)`, `.get_table(name)`, `.list_tables()`
-- [ ] One integration test against a Dockerized Postgres with a known schema *(CI wired; runs in `integration-postgres` job)*
+- [x] One integration test against a Dockerized Postgres with a known schema *(CI `integration-postgres` job wires a `postgres:16` service container + `DATABASE_URL`; SQLite covered locally by `tests/integration_sqlite.rs`. Real-DB credential gating left for the user.)*
 
 Done when: pointed at your PwC dev Postgres, it lists every table and returns column metadata for `stg_ndpd_mbt_tmobile_macro_combined` correctly.
 
@@ -153,8 +153,8 @@ Done when: README has a defensible numbers table that survives "but how did you 
 **Tag:** `v0.1.0` (no suffix) · **Estimated:** 1 weekend
 
 Deliverables:
-- [ ] crates.io publish (`schemadex-core`, then `schemadex` if you go that route)
-- [ ] PyPI publish via maturin GitHub Action on tag
+- [ ] crates.io publish (`schemadex-core`, then `schemadex` if you go that route) *(awaiting `CARGO_REGISTRY_TOKEN` secret; `cargo publish --dry-run -p schemadex-core` already passes)*
+- [x] PyPI publish via maturin GitHub Action on tag *(`v0.1.0` and `v0.1.1` published — https://pypi.org/project/schemadex/. 0.1.0 shipped 4 wheels; 0.1.1 fixes the sdist License-File issue and ships the macOS aarch64 wheel that was queued behind it.)*
 - [x] README polish: pitch in 3 lines, install in 1 line, working example in 10 lines, benchmark table
 - [ ] Announce: HN Show, r/rust, r/Python, r/LocalLLaMA, X thread tagging LangChain/LangGraph maintainers
 - [ ] Crosspost from your bm25-rs followers — you already have an audience nucleus
