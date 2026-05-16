@@ -175,3 +175,48 @@ Order by user demand, not by your interest:
 - arXiv writeup once you have 3+ months of real-world usage data
 
 ---
+
+## Post-0.1 improvement roadmap
+
+The list below assumes 0.1.x ships and a few people try it. Items are ordered by ratio of *impact / effort*, not by personal interest. Each row names a tag, the user-visible win, and the smallest task that unblocks the rest.
+
+### v0.2 — close obvious holes (~2 weekends)
+- [ ] **Linux aarch64 wheel.** Currently dropped from the matrix because `ring` fails cross-compile. Either swap `sqlx`'s TLS backend to `runtime-tokio-native-tls` (vendored OpenSSL) or move to `aws-lc-rs`. Win: Apple Silicon + Graviton users stop building from source.
+- [ ] **DuckDB PK/FK introspection.** Today the DuckDB backend returns `None` / empty for `primary_key` / `foreign_keys`. Wire `duckdb_constraints()` (DuckDB ≥0.10) and add a per-table integration test.
+- [ ] **`sample_values=True` exposed at Python level.** Rust has `PostgresIntrospector::with_sampling`; Python `SchemaCache.from_url` cannot trigger sampling. Add `sample_values: bool = False` + `sample_policy` kwargs.
+- [ ] **Sentinel-flag plumbed into `describe_for_agent`.** Already rendered, but only when samples were collected — without sampling, the bench cannot measure the sentinel contribution. Tied to the previous item.
+- [ ] **Per-table `refresh(table=...)` on Python API.** Rust core supports incremental refresh; Python only exposes the full-cache build. Add `cache.refresh()` and `cache.refresh_table("orders")`.
+
+### v0.3 — real-LLM bench teeth (~2 weekends)
+- [ ] **Three-axis ablation.** Instead of "baseline vs treatment", run 4 cells: {schema dump, schemadex describe} × {no resolve, resolve}. Today's bench bundles the contributions; the ablation isolates each.
+- [ ] **Token-budget stress run.** Re-run the Ollama bench at `max_tokens=512` and `max_tokens=256`. This is where `describe_for_agent` is supposed to dominate; today's `max_tokens=1024` doesn't pressure-test it.
+- [ ] **Sample-value contribution case.** Build a 5-record corpus where the question is unanswerable without seeing that 80% of `delay_code` is `'No Delay'`. Run baseline (no samples) vs treatment (samples on). This is the Nokia story made measurable.
+- [ ] **BIRD-mini wiring.** Replace the stub `baseline.py` / `treatment.py` with a real call into BIRD-mini using an Anthropic or OpenAI key from `$ANTHROPIC_API_KEY` / `$OPENAI_API_KEY`. Gate the CI job on the secret being present so the harness still type-checks without one.
+
+### v0.4 — semantic resolution + agent ergonomics (~3 weekends)
+- [ ] **Embedding-based fallback for low-confidence matches.** When Jaro-Winkler scores below 0.85, query a local embedding model (the existing `nomic-embed-text-v2-moe` on the user's Ollama would do) and re-rank. Tied: figures out `state` → `status` and `body` → `review_body`, the two synthetic misses.
+- [ ] **`cache.run_sql(query, token_budget)` method.** Execute a query through the cached connection, paginate, and truncate the result table to fit a token budget. This is the second-most-asked agent ergonomic after schema discovery.
+- [ ] **Async Python API.** Wrap the existing tokio runtime calls in `pyo3-async-runtimes` to expose `async SchemaCache.from_url_async()`. Win: stops blocking the event loop in async agent frameworks (LangGraph, llama-index).
+- [ ] **MCP server.** Tiny wrapper that exposes `list_tables`, `describe_for_agent`, `resolve_column`, and `run_sql` as MCP tools. One config line in Claude Code / Cursor and the agent has the lot.
+
+### v0.5 — new backends (~4 weekends, order by demand)
+- [ ] **MySQL** via `sqlx-mysql`. Mostly schema-introspection plumbing; PRs welcome.
+- [ ] **BigQuery** via the official Rust client. Schema lives in `INFORMATION_SCHEMA.COLUMNS` and `INFORMATION_SCHEMA.KEY_COLUMN_USAGE`. Auth via ADC.
+- [ ] **Snowflake** via REST API + standard JWT auth. Lower priority than BigQuery unless someone asks.
+- [ ] **MSSQL** via `tiberius`. Enterprise gravity.
+
+### Observability, safety, distribution (chip away in parallel)
+- [ ] **`tracing` spans** around every backend call, with a `schemadex=info` env-filter recipe documented.
+- [ ] **Sample-value redaction policy.** Default: skip columns matching `email`, `phone`, `ssn`, anything pg-marked `personally_identifiable`. Opt-in override for trusted databases.
+- [ ] **PEP 740 trusted publishing.** Replace the `PYPI_API_TOKEN` GitHub secret with OIDC. Removes the long-lived token blast radius.
+- [ ] **Slim per-backend wheels.** Today the default wheel bundles `postgres + sqlite + duckdb_backend`, which puts DuckDB at ~20 MB. Ship `schemadex` (slim), `schemadex[postgres]`, `schemadex[sqlite]`, `schemadex[duckdb]` extras.
+- [ ] **`cargo deny` clean.** Two advisories (`PyString::from_object` buffer-overflow note in pyo3) + license rejection still trip `cargo deny`. Currently the CI job is non-blocking; tighten when fixes are upstream.
+- [ ] **mkdocs site** at `schemadex.dev` (or GitHub Pages). Rustdoc for `schemadex-core` cross-linked from the Python docs.
+
+### Stretch / research-mode (no commitment)
+- [ ] **Query-plan-aware ranking.** When the question hints at a JOIN, weight tables that participate in matching FKs higher in `describe_for_agent`.
+- [ ] **Schema diff command.** `schemadex diff --from cache.json --to live` emits a human-readable changelog between two cache snapshots. Useful for "what broke my agent overnight" debugging.
+- [ ] **Learned scoring.** Train a tiny model on `(candidate, real_column, schema_context)` triples to replace Jaro-Winkler's confidence number. Only worth doing once we have real-world miss logs.
+- [ ] **arXiv writeup.** After 3+ months of real-world usage + a real BIRD/Spider table.
+
+---
