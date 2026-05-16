@@ -6,7 +6,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.80"
 license = "MIT OR Apache-2.0"
@@ -15,7 +15,7 @@ homepage = "https://github.com/AmiyaMandal1/schemadex"
 authors = ["Amiya Mandal <amiya19mandal@gmail.com>"]
 
 [workspace.dependencies]
-schemadex-core = { path = "crates/schemadex-core", version = "0.1.0" }
+schemadex-core = { path = "crates/schemadex-core", version = "0.1.1" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1.40", features = ["rt-multi-thread", "macros", "sync", "fs"] }

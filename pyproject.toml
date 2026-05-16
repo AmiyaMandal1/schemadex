@@ -6,7 +6,8 @@ build-backend = "maturin"
 name = "schemadex"
 description = "Schema introspection and resolution toolkit for SQL agents"
 readme = "README.md"
-license = { text = "MIT OR Apache-2.0" }
+license = "MIT OR Apache-2.0"
+license-files = ["LICENSE-MIT", "LICENSE-APACHE"]
 requires-python = ">=3.9"
 keywords = ["sql", "schema", "introspection", "agents", "llm"]
 classifiers = [
@@ -46,6 +47,11 @@ manifest-path = "crates/schemadex-py/Cargo.toml"
 module-name = "schemadex._native"
 python-source = "python"
 features = ["pyo3/extension-module"]
+include = [
+  { path = "LICENSE-MIT", format = "sdist" },
+  { path = "LICENSE-APACHE", format = "sdist" },
+  { path = "README.md", format = "sdist" },
+]
 
 [tool.ruff]
 line-length = 100

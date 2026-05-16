@@ -4,6 +4,13 @@ All notable changes to this project follow [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-05-16
+
+### Fixed
+- PyPI publish failed for the sdist on 0.1.0 because `License-File LICENSE-APACHE does not exist in distribution file`. Switched `pyproject.toml` to PEP 639 (`license = "MIT OR Apache-2.0"` + `license-files = ["LICENSE-MIT", "LICENSE-APACHE"]`) and added an explicit `[tool.maturin].include` so the LICENSE files land inside the sdist tarball. Also publishes the macOS aarch64 wheel that was queued behind the failing sdist on 0.1.0.
+
+## [0.1.0] - 2026-05-16
+
 ### Added
 - Workspace layout: `schemadex-core` (Rust) + `schemadex-py` (PyO3 bindings as `schemadex._native`).
 - `SchemaIntrospector` trait with Postgres, SQLite, and DuckDB backends behind feature flags.
