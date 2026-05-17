@@ -28,6 +28,7 @@ from . import _native
 from ._native import ResolveResult, SchemaCache, __version__
 from .embedding_resolve import resolve_with_embedding
 from . import dbt_source
+from . import failure_log
 
 __all__ = [
     "SchemaCache",
@@ -40,6 +41,7 @@ __all__ = [
     "refresh_table_async",
     "run_sql_async",
     "dbt_source",
+    "failure_log",
     "__version__",
 ]
 
