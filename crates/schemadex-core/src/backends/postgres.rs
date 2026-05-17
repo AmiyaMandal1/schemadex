@@ -593,4 +593,63 @@ impl QueryRunner for PostgresIntrospector {
             truncated,
         })
     }
+
+    #[tracing::instrument(
+        level = "debug",
+        name = "postgres.preview_cost",
+        skip(self, sql),
+        fields(sql_len = sql.len()),
+    )]
+    async fn preview_cost(&self, sql: &str) -> Result<crate::CostEstimate> {
+        // EXPLAIN (FORMAT JSON) returns a single JSON column with a
+        // one-element array; `Plan.Plan Rows` and `Plan.Total Cost` live
+        // under the top-level `Plan` object.
+        let explain_sql = format!("EXPLAIN (FORMAT JSON) {sql}");
+        let row = match sqlx::query(&explain_sql).fetch_one(&self.pool).await {
+            Ok(r) => r,
+            Err(e) => {
+                return Ok(crate::CostEstimate {
+                    bytes_processed: None,
+                    rows_estimate: None,
+                    warning: Some(format!("EXPLAIN failed: {e}")),
+                });
+            }
+        };
+        // First column may come back as a `serde_json::Value` directly,
+        // or as a string depending on driver coercion. Try Value first.
+        let val: serde_json::Value = match row.try_get::<serde_json::Value, _>(0) {
+            Ok(v) => v,
+            Err(_) => match row.try_get::<String, _>(0) {
+                Ok(s) => serde_json::from_str(&s).unwrap_or(serde_json::Value::Null),
+                Err(e) => {
+                    return Ok(crate::CostEstimate {
+                        bytes_processed: None,
+                        rows_estimate: None,
+                        warning: Some(format!("decode EXPLAIN row: {e}")),
+                    });
+                }
+            },
+        };
+        // Drill into `[0]["Plan"]`.
+        let plan = val
+            .as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|item| item.get("Plan"));
+        let rows_estimate = plan
+            .and_then(|p| p.get("Plan Rows"))
+            .and_then(|v| v.as_u64());
+        let total_cost = plan
+            .and_then(|p| p.get("Total Cost"))
+            .and_then(|v| v.as_f64());
+        let warning = if rows_estimate.is_none() && total_cost.is_none() {
+            Some("EXPLAIN returned no Plan section".to_string())
+        } else {
+            total_cost.map(|c| format!("postgres total_cost={c:.2}"))
+        };
+        Ok(crate::CostEstimate {
+            bytes_processed: None,
+            rows_estimate,
+            warning,
+        })
+    }
 }

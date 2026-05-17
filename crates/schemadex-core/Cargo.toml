@@ -49,6 +49,7 @@ strsim.workspace = true
 tiktoken-rs.workspace = true
 regex.workspace = true
 zstd.workspace = true
+once_cell.workspace = true
 tiberius = { version = "0.12", default-features = false, features = ["tds73", "rustls"], optional = true }
 tokio-util = { version = "0.7", features = ["compat"], optional = true }
 # Vendored OpenSSL is unconditionally built so the manylinux_2_28

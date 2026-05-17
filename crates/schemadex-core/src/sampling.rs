@@ -24,6 +24,12 @@ pub struct RedactionPolicy {
     pub deny_substrings: Vec<String>,
     /// Skip sampling for columns whose comment contains any of these.
     pub deny_comment_substrings: Vec<String>,
+    /// Opt-in: when true, [`RedactionPolicy::should_redact_column`] also
+    /// inspects the column's collected sample values via
+    /// [`crate::pii::classify_column`] and returns `true` when the
+    /// heuristic flags the column as containing PII. Off by default to
+    /// preserve the cheap name/comment-only fast path.
+    pub classify_values: bool,
 }
 
 impl RedactionPolicy {
@@ -55,6 +61,7 @@ impl RedactionPolicy {
             .into_iter()
             .map(str::to_string)
             .collect(),
+            classify_values: false,
         }
     }
 
@@ -69,6 +76,20 @@ impl RedactionPolicy {
             if self.deny_comment_substrings.iter().any(|s| lc.contains(s)) {
                 return true;
             }
+        }
+        false
+    }
+
+    /// Like [`Self::should_redact`] but additionally consults a column's
+    /// collected sample values via [`crate::pii::classify_column`] when
+    /// `classify_values` is enabled. Use this when you already have a
+    /// [`crate::model::Column`] in hand (e.g. post-sampling).
+    pub fn should_redact_column(&self, column: &crate::model::Column) -> bool {
+        if self.should_redact(&column.name, column.comment.as_deref()) {
+            return true;
+        }
+        if self.classify_values && crate::pii::classify_column(column).is_some() {
+            return true;
         }
         false
     }

@@ -2980,6 +2980,7 @@ dependencies = [
  "gcp-bigquery-client",
  "hex",
  "jsonwebtoken",
+ "once_cell",
  "openssl",
  "opentelemetry",
  "opentelemetry-otlp",
@@ -3010,6 +3011,7 @@ dependencies = [
 name = "schemadex-py"
 version = "1.0.0"
 dependencies = [
+ "async-trait",
  "pyo3",
  "pyo3-async-runtimes",
  "schemadex-core",

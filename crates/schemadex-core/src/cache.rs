@@ -923,6 +923,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn preview_cost_default_runner_reports_not_supported() {
+        // The CountingRunner inherits the default `preview_cost` impl,
+        // which returns `bytes_processed=None`, `rows_estimate=None`, and
+        // a "not supported" warning. SQLite / MySQL / DuckDB / MSSQL all
+        // ride this same default in the production code.
+        let tmp = TempDir::new().unwrap();
+        let cache = build_cache(&tmp).await;
+        let runner = CountingRunner::new();
+        let est = cache.preview_cost(&runner, "SELECT 1").await.unwrap();
+        assert!(est.bytes_processed.is_none());
+        assert!(est.rows_estimate.is_none());
+        let w = est.warning.as_deref().unwrap_or("");
+        assert!(w.contains("not supported"), "warning was {w:?}");
+    }
+
+    #[tokio::test]
     async fn invalidate_marks_ddl_hash() {
         let tmp = TempDir::new().unwrap();
         let mut cache = build_cache(&tmp).await;

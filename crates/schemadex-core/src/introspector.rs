@@ -42,6 +42,17 @@ pub trait QueryRunner: Send + Sync {
         let _ = token_budget;
         self.run_sql(sql, 200).await
     }
+
+    /// Estimate the cost of executing `sql` *without* running it. Default
+    /// impl returns a "not supported" warning; backends that have a
+    /// meaningful dry-run / EXPLAIN path override this.
+    async fn preview_cost(&self, _sql: &str) -> Result<crate::CostEstimate> {
+        Ok(crate::CostEstimate {
+            bytes_processed: None,
+            rows_estimate: None,
+            warning: Some("not supported".to_string()),
+        })
+    }
 }
 
 /// Convert a byte-length to a token estimate. 1 token ≈ 3-4 bytes for typical

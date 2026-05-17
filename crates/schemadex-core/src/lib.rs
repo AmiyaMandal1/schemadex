@@ -10,11 +10,14 @@ pub mod agent;
 pub mod cache;
 pub mod error;
 pub mod examples;
+pub mod federation;
 pub mod fingerprint;
 pub mod hint;
 pub mod introspector;
 pub mod memo;
 pub mod model;
+pub mod overlap;
+pub mod pii;
 pub mod resolve;
 pub mod safety;
 pub mod sampling;
@@ -30,6 +33,9 @@ pub use crate::otel::init_otel;
 
 pub use crate::agent::{describe_for_agent, DescribeOptions};
 pub use crate::cache::{EmbeddingIndex, SchemaCache, INVALIDATED_DDL_HASH};
+pub use crate::federation::Federation;
+pub use crate::overlap::{find_overlaps, OverlapHint};
+pub use crate::pii::{classify_column, PiiKind};
 pub use crate::memo::{CachedResult, ResultCache};
 pub use crate::error::{Result, SchemadexError};
 pub use crate::examples::{generate_examples, generate_examples_for_database};
@@ -40,6 +46,18 @@ pub use crate::model::{
 };
 pub use crate::resolve::{resolve_column, ResolveResult};
 pub use crate::safety::assert_readonly;
+
+/// Pre-execute cost estimate for a SQL statement against a particular
+/// backend. Returned by [`QueryRunner::preview_cost`].
+///
+/// Backends that don't have a meaningful cost-estimation API leave the
+/// numeric fields as `None` and surface a brief `warning`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CostEstimate {
+    pub bytes_processed: Option<u64>,
+    pub rows_estimate: Option<u64>,
+    pub warning: Option<String>,
+}
 pub use crate::synonyms::{resolve_column_with_synonyms, SynonymEntry, SynonymMap};
 pub use crate::validate::{validate_sql, IssueKind, ValidationIssue};
 
@@ -308,6 +326,24 @@ impl SchemaCache {
             )));
         }
         self.run_sql_unchecked(runner, sql, token_budget).await
+    }
+
+    /// Pre-execute cost estimate. Delegates to
+    /// [`QueryRunner::preview_cost`]; backends that don't support a
+    /// dry-run return a `CostEstimate` with `None` numeric fields and a
+    /// "not supported" warning.
+    #[tracing::instrument(
+        level = "info",
+        name = "schema_cache.preview_cost",
+        skip(self, runner, sql),
+        fields(sql_len = sql.len()),
+    )]
+    pub async fn preview_cost<R: QueryRunner + ?Sized>(
+        &self,
+        runner: &R,
+        sql: &str,
+    ) -> Result<CostEstimate> {
+        runner.preview_cost(sql).await
     }
 }
 
